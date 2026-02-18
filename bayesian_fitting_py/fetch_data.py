@@ -13,6 +13,10 @@ from typing import List, Optional
 
 BASE_URL = 'https://github.com/vbr-calc/vbrPublicData/raw/master/LAB_fitting_bayesian/data'
 
+# Package-relative default: vbrc_V2Tpy/ (parent of bayesian_fitting_py/)
+_PACKAGE_DIR = Path(__file__).resolve().parent          # bayesian_fitting_py/
+_DEFAULT_DATA_PARENT = str(_PACKAGE_DIR.parent)         # vbrc_V2Tpy/
+
 
 def build_project_directories(data_dir: str = './data') -> None:
     """
@@ -62,15 +66,19 @@ def fetch_one_file(url: str, local_file: str) -> bool:
         return False
 
 
-def fetch_data(data_dir_parent: str = '.') -> None:
+def fetch_data(data_dir_parent: Optional[str] = None) -> None:
     """
     Set up data directory and fetch all required data files.
 
     Parameters
     ----------
-    data_dir_parent : str
-        Parent directory for the data folder
+    data_dir_parent : str, optional
+        Parent directory for the data folder.  When *None* (the default),
+        data is placed under the package install directory
+        (``vbrc_V2Tpy/data/``).
     """
+    if data_dir_parent is None:
+        data_dir_parent = _DEFAULT_DATA_PARENT
     data_dir = os.path.join(data_dir_parent, 'data')
     build_project_directories(data_dir)
     
@@ -163,14 +171,37 @@ def fetch_data(data_dir_parent: str = '.') -> None:
         print("\n✓ All data files successfully fetched!")
 
 
-if __name__ == '__main__':
+def _cli_main() -> None:
+    """Entry point for ``fetch-vbr-data`` console script and ``python -m``."""
     import argparse
     
     parser = argparse.ArgumentParser(description='Fetch required data files')
     parser.add_argument(
-        '--data-dir', type=str, default='.',
-        help='Parent directory for data folder'
+        '--data-dir', type=str, default=None,
+        help=(
+            'Parent directory for data folder '
+            f'(default: package install dir, currently {_DEFAULT_DATA_PARENT})'
+        ),
+    )
+    parser.add_argument(
+        '-y', '--yes', action='store_true',
+        help='Skip confirmation prompt and download immediately',
     )
     
     args = parser.parse_args()
+    
+    target = args.data_dir if args.data_dir is not None else _DEFAULT_DATA_PARENT
+    data_path = os.path.join(target, 'data')
+
+    if not args.yes:
+        print(f"This will download ~180 MB of data files into:\n  {data_path}\n")
+        answer = input("Proceed? [y/N] ").strip().lower()
+        if answer not in ('y', 'yes'):
+            print("Aborted.")
+            raise SystemExit(0)
+
     fetch_data(args.data_dir)
+
+
+if __name__ == '__main__':
+    _cli_main()

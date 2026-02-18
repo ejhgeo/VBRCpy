@@ -275,16 +275,24 @@ JSON configuration files are also supported with the same structure.
 ### Fetching Data
 
 The package requires pre-computed VBR sweep data and seismic observations.
-To fetch the required data files:
+To fetch the required data files (~180 MB):
 
-```python
-from bayesian_fitting_py.fetch_data import fetch_data
-fetch_data('./data')
+```bash
+# Interactive prompt (asks before downloading)
+fetch-vbr-data
+
+# Skip prompt
+fetch-vbr-data -y
+
+# Or via python -m
+python -m bayesian_fitting_py.fetch_data
 ```
 
-Or from command line:
+By default, data is placed in `vbrc_V2Tpy/data/` (alongside the package).
+To choose a different location:
+
 ```bash
-python -m bayesian_fitting_py.fetch_data --data-dir .
+fetch-vbr-data --data-dir /path/to/parent
 ```
 
 ## Data Requirements
