@@ -1,0 +1,15 @@
+# Build artifacts
+*.egg-info/
+__pycache__/
+build/
+dist/
+
+# macOS
+.DS_Store
+
+# Data files (too large for GitHub; download separately)
+data/*.mat
+data/**/*.mat
+
+# Temporary files
+data/tmp/

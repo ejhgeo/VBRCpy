@@ -1,0 +1,98 @@
+# ============================================================================
+# VBR Parameter Sweep Generation Configuration
+# ============================================================================
+# This configuration file controls the generation of look-up tables (sweeps)
+# for Bayesian inversion of seismic observations.
+#
+# Run with:
+#   python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml
+# ============================================================================
+
+sweep_generation:
+  # --------------------------------------------------------------------------
+  # Temperature grid [degrees Celsius]
+  # --------------------------------------------------------------------------
+  temperature:
+    min: 1100
+    max: 1800
+    step: 20
+  
+  # Alternative: specify exact values
+  # temperature:
+  #   values: [1100, 1200, 1300, 1400, 1500, 1600]
+
+  # --------------------------------------------------------------------------
+  # Melt fraction grid [volume fraction, 0-1]
+  # --------------------------------------------------------------------------
+  # melt_fraction:
+    # values: [0, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05]
+    # values: [0, 0.0001, 0.001, 0.01]
+  
+  # Alternative: linear or log spacing
+  melt_fraction:
+    min: 0
+    max: 0.05
+    n_points: 21
+    type: linear  # or 'log'
+
+  # --------------------------------------------------------------------------
+  # Grain size grid [micrometers]
+  # --------------------------------------------------------------------------
+  grain_size:
+    min: 100      # 0.1 mm
+    max: 30000    # 50 mm
+    n_points: 25
+    type: log     # logarithmic spacing
+
+  # --------------------------------------------------------------------------
+  # Depth range [km]
+  # --------------------------------------------------------------------------
+  depth:
+    min: 50
+    max: 170
+    n_points: 100
+
+  # --------------------------------------------------------------------------
+  # Period range for frequency averaging [seconds]
+  # --------------------------------------------------------------------------
+  freq_log_min: -2.2
+  freq_log_max: -1.3
+  n_freq: 10
+  period:
+    min: 50       # maximum frequency
+    max: 150      # minimum frequency
+
+  # --------------------------------------------------------------------------
+  # Anelastic methods to calculate
+  # --------------------------------------------------------------------------
+  # Available methods:
+  #   - eburgers_psp: Extended Burgers (Jackson & Faul, 2010)
+  #   - andrade_psp: Andrade pseudo-period scaling
+  #   - xfit_mxw: McCarthy et al. (2011) master curve
+  #   - xfit_premelt: Yamauchi & Takei (2016) pre-melting
+  anelastic_methods:
+    - eburgers_psp
+    - andrade_psp
+    - xfit_mxw
+    - xfit_premelt
+
+  # --------------------------------------------------------------------------
+  # Output file
+  # --------------------------------------------------------------------------
+  output_file: sweep_fixed.mat
+
+  # --------------------------------------------------------------------------
+  # Anelastic options 
+  # --------------------------------------------------------------------------
+  elastic:
+    temperature_scaling: isaak    # or 'isaak', 'cammarano'
+    pressure_scaling: cammarano   # or 'cammarano', 'abramson'
+    reference_scaling: default    # or 'default'
+
+  # --------------------------------------------------------------------------
+  # Other parameters (optional)
+  # --------------------------------------------------------------------------
+  # density: 3300          # kg/m^3
+  # stress: 0.1            # MPa
+  # water_content: 0       # ppm
+  # eburgers_method: FastBurger  # or PointWise (default: FastBurger)

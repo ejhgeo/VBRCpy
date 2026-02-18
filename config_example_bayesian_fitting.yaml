@@ -1,0 +1,102 @@
+# ============================================================================
+# Bayesian Seismic Inversion Config File (User Inputs)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# LOCATION MODE
+# ----------------------------------------------------------------------------
+# How to specify locations for the inversion:
+#   - 'manual': specify locations, names, z_ranges directly below
+#   - 'locations_file': load locations from a CSV/text file (seismic from .mat)
+#   - 'csv_model': load locations AND seismic data from a single CSV file
+#   - 'mat_model': load locations AND seismic data from a .mat file with depths
+#   - 'netcdf_model': load locations AND seismic data from a NetCDF file
+location_mode: 'locations_file'  
+
+# For 'locations_file' mode: path to location file
+# Format: lon, lat, [name], z_min, z_max (comma or whitespace separated)
+location_file: ./test_locations.csv
+
+# For 'csv_model', 'mat_model', or 'netcdf_model' modes:
+#   - seismic_model_file: path to the file containing locations + Vs/Q data
+#   - model_z_range: optional depth range filter [z_min, z_max] in km
+#   - model_subsample: use every Nth point (1 = all points)
+#   - default_vs_error: default Vs error (km/s) if not in file (default: 0.05)
+#   - default_q_error: default Q error if not in file (default: 10.0)
+
+# seismic_model_file: './test_Pat_model.csv'
+# seismic_model_file: '/Users/ehightow/Research/PatagoniaGIA/Tomography/3_D_model_WashU.nc'
+# seismic_model_file: './data/vel_models/Shen_Ritzwoller_2016.mat'
+# model_z_range: [99.6, 100.4]
+# model_subsample: 10
+default_vs_error: 0.05
+default_q_error: 10.0
+
+# ----------------------------------------------------------------------------
+# MANUAL LOCATIONS (used only when location_mode: manual)
+# ----------------------------------------------------------------------------
+locations:
+- - 40.7
+  - -117.5
+- - 39
+  - -109.8
+- - 37.2
+  - -100.9
+names:
+- BasinRange
+- ColoradoPlateau
+- Interior
+z_ranges:
+- - 75
+  - 105
+- - 120
+  - 150
+- - 120
+  - 150
+location_colors:
+- - 1
+  - 0.6
+  - 0
+- - 0
+  - 0.8
+  - 0
+- - 0
+  - 0.3
+  - 0
+
+# ----------------------------------------------------------------------------
+# DATA FILES
+# ----------------------------------------------------------------------------
+vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
+q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
+lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
+# sweep_file: ./vbrc_V2Tpy/data/plate_VBR/sweep_log_gs.mat  # original sweep file with VBRc distribution
+sweep_file: ./sweep_fixed.mat
+# sweep_file: ./test.mat
+
+# ----------------------------------------------------------------------------
+# INVERSION SETTINGS
+# ----------------------------------------------------------------------------
+# Anelastic methods: andrade_psp, eburgers_psp, xfit_mxw, xfit_premelt
+anelastic_methods:
+- eburgers_psp
+- xfit_mxw
+- xfit_premelt
+- andrade_psp
+
+# Grain size prior: log_uniform, log_normal_1mm, log_normal_1cm
+gs_prior_case: log_normal_1cm
+
+# Observations to use: Vs, Q, or VsQ (both)
+obs_types: VsQ
+
+# ----------------------------------------------------------------------------
+# OUTPUT SETTINGS
+# ----------------------------------------------------------------------------
+output_dir: plots_debug_new/
+# output_dir: plots_reference_from_testmat_sweep/
+save_plots: true
+
+# For large-scale runs (tomography mode), save ML estimates to CSV
+save_ml_csv: true
+# ml_csv_file: ml_estimates.csv  # auto-generated if not specified

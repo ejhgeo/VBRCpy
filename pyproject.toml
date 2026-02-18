@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bayesian_fitting_py"
+version = "1.0.0"
+description = "Bayesian inversion of seismic Vs and Q using the VBR calculator"
+readme = "bayesian_fitting_py/README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "matplotlib>=3.4.0",
+    "pyyaml>=5.0",
+]
+
+[project.optional-dependencies]
+full = [
+    "pandas",
+    "xarray",
+    "netCDF4",
+]
+
+[tool.setuptools.packages.find]
+include = ["bayesian_fitting_py*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.txt", "*.md"]
