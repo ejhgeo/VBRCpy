@@ -1,8 +1,8 @@
 # Bayesian Fitting for Seismic Inversion (Python)
 
 Python translation of the MATLAB VBR bayesian_fitting project for estimating
-temperature, melt fraction, and grain size from seismic Vs and Q observations
-using Bayesian inference.
+temperature, melt fraction, grain size, and **viscosity** from seismic Vs and Q
+observations using Bayesian inference.
 
 All four anelastic methods (`andrade_psp`, `eburgers_psp`, `xfit_mxw`,
 `xfit_premelt`) have been verified against the original MATLAB VBR calculator
@@ -12,10 +12,11 @@ to floating-point precision across a full parameter sweep.
 
 This package provides tools to:
 - Load and process seismic velocity (Vs) and attenuation (Q) observations
-- Calculate posterior probability distributions for state variables
+- Calculate posterior probability distributions for state variables (T, φ, gs, η)
+- Estimate **viscosity** (log₁₀ η) with full posterior uncertainty from HK2003 composite rheology
 - Combine results across multiple anelastic calculation methods
 - Generate publication-quality figures
-- Scale from single locations to full 3D seismic models
+- Scale from single locations to full 3D seismic models with **multiprocessing** support
 
 ## Installation
 
@@ -204,6 +205,33 @@ When processing >20 locations:
 python -m bayesian_fitting_py --location-mode csv_model --seismic-model-file model.csv --save-csv --csv-file my_results.csv
 ```
 
+### Parallel Processing
+
+For large-scale runs (tomography models), use the `--parallel` / `-j` flag to
+process locations in parallel using Python multiprocessing:
+
+```bash
+# Use 4 worker processes
+python -m bayesian_fitting_py --config my_config.yaml --parallel 4
+
+# Auto-detect all available CPU cores
+python -m bayesian_fitting_py --config my_config.yaml -j 0
+
+# Or set in the YAML config file:
+# parallel_workers: 4
+```
+
+Parallel mode is available for model-based location modes (`csv_model`,
+`mat_model`, `netcdf_model`). It pre-computes depth-averaged grids and priors
+once, then distributes locations across worker processes. Results are identical
+to sequential mode.
+
+| Workers | Time (3168 locs × 4 methods) |
+|---------|------------------------------|
+| 1 (sequential) | ~22 min |
+| 4 | ~8 min |
+| 16 (all cores) | ~4 min |
+
 ### Using Parameter Files
 
 Instead of specifying all options on the command line, you can use a configuration file:
@@ -268,6 +296,10 @@ obs_types: VsQ
 output_dir: plots/output_plots
 save_plots: true
 save_ml_csv: false
+
+# Parallelization (for large-scale runs)
+# 0 = auto (all cores), 1 = sequential (default), N = N workers
+# parallel_workers: 4
 ```
 
 JSON configuration files are also supported with the same structure.
@@ -312,12 +344,13 @@ These can be fetched automatically from the vbrPublicData repository.
 bayesian_fitting_py/
 ├── __init__.py          # Package initialization
 ├── __main__.py          # CLI entry point
+├── run_bayes.py         # Main inversion script, CLI, InversionConfig
+├── fitting.py           # Fitting functions & ML estimation (incl. viscosity)
+├── parallel.py          # Multiprocessing support for large-scale runs
+├── data_processing.py   # Seismic data loading and processing
 ├── probability.py       # Probability distribution functions
 ├── prior.py             # Prior probability calculations
-├── data_processing.py   # Seismic data loading and processing
-├── fitting.py           # Main fitting functions
 ├── plotting.py          # Visualization functions
-├── run_bayes.py         # Main inversion script
 ├── fetch_data.py        # Data fetching utilities
 ├── requirements.txt     # Python dependencies
 ├── README.md            # This file
@@ -326,7 +359,7 @@ bayesian_fitting_py/
     ├── core.py           # Main VBR calculation engine (elastic, viscous, anelastic)
     ├── params.py         # Parameter classes for all methods
     ├── thermal.py        # Solidus and thermal calculations
-    └── generate_sweep.py # Parameter sweep generation and I/O
+    └── generate_sweep.py # Parameter sweep generation and I/O (incl. viscosity)
 ```
 
 ## VBR Calculator (Python Translation)
@@ -516,6 +549,27 @@ The inversion produces:
 - Regional fits showing T-φ tradeoffs across methods
 - Ensemble PDFs combining results across methods
 - Pickled results file for further analysis
+- **CSV file** with ML estimates for all locations and methods
+
+### CSV Output Columns
+
+When `save_ml_csv: true`, the output CSV contains one row per location × method:
+
+| Column | Description |
+|--------|-------------|
+| `name`, `lat`, `lon`, `z` | Location identifiers |
+| `z_min`, `z_max` | Depth averaging range (km) |
+| `anelastic_method` | Method used |
+| `T_ml`, `T_std`, `T_mean` | Temperature (K): max-likelihood, std, mean |
+| `phi_ml`, `phi_std`, `phi_mean` | Melt fraction: max-likelihood, std, mean |
+| `gs_ml_mm`, `gs_std_mm`, `gs_mean_mm` | Grain size (mm): max-likelihood, std, mean |
+| `log10_eta_ml`, `log10_eta_std`, `log10_eta_mean` | Viscosity (log₁₀ Pa·s): max-likelihood, std, mean |
+| `Vs_obs`, `Vs_pred`, `Vs_misfit`, `Vs_chi2` | Vs fit diagnostics |
+| `Q_obs`, `Q_pred`, `Q_misfit`, `Q_chi2` | Q fit diagnostics |
+| `chi2_total` | Total χ² misfit |
+
+Viscosity is computed from the HK2003 composite rheology (diffusion + dislocation + GBS)
+and reported as the full posterior marginal distribution (not just the ML point estimate).
 
 ## Grain Size Priors
 

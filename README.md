@@ -1,12 +1,15 @@
 # vbrc_V2Tpy — Bayesian Seismic Inversion (Python)
 
 Python translation of the MATLAB [VBR Calculator](https://github.com/vbr-calc/vbr)
-bayesian_fitting project for estimating temperature, melt fraction, and grain size
-from seismic Vs and Q observations using Bayesian inference.
+bayesian_fitting project for estimating temperature, melt fraction, grain size,
+and **viscosity** from seismic Vs and Q observations using Bayesian inference.
 
 All four anelastic methods (`andrade_psp`, `eburgers_psp`, `xfit_mxw`,
 `xfit_premelt`) have been verified against the original MATLAB VBR calculator
 to floating-point precision across a full parameter sweep.
+
+Designed to scale from single locations to global tomography models with
+built-in **multiprocessing support** for large-scale runs.
 
 ## Quick Start
 
@@ -49,6 +52,10 @@ python -m bayesian_fitting_py
 # Use a YAML configuration file
 python -m bayesian_fitting_py --config config_example_bayesian_fitting.yaml
 
+# Parallel processing for large-scale runs (0 = auto-detect all cores)
+python -m bayesian_fitting_py --config my_config.yaml --parallel 4
+python -m bayesian_fitting_py --config my_config.yaml -j 0
+
 # List available anelastic methods
 python -m bayesian_fitting_py --list-methods
 ```
@@ -56,7 +63,9 @@ python -m bayesian_fitting_py --list-methods
 ## Features
 
 - **Bayesian inversion** of Vs and/or Q at arbitrary locations and depth ranges
+- **Viscosity estimation**: full posterior for log₁₀(η) using HK2003 composite rheology
 - **Four anelastic methods**: andrade_psp, eburgers_psp, xfit_premelt, xfit_mxw
+- **Parallel processing**: multiprocessing support for large-scale tomography runs
 - **Multiple input modes**: manual locations, CSV, MAT, NetCDF seismic models
 - **Pure-Python VBR calculator** — generate parameter sweeps without MATLAB
 - **Publication-quality plots** with posterior PDFs, T–φ trade-offs, and ensemble summaries
@@ -69,16 +78,18 @@ vbrc_V2Tpy/
 ├── data/                           # Fetched data files (git-ignored)
 ├── config_example_*.yaml           # Example configuration files
 └── bayesian_fitting_py/            # Python package
-    ├── run_bayes.py                # Main inversion driver
+    ├── run_bayes.py                # Main inversion driver & CLI
+    ├── fitting.py                  # Fitting functions & ML estimation
+    ├── parallel.py                 # Multiprocessing support for large-scale runs
+    ├── data_processing.py          # Seismic data I/O (CSV, MAT, NetCDF)
+    ├── probability.py / prior.py   # Probability & prior functions
+    ├── plotting.py                 # Visualisation
     ├── fetch_data.py               # Data download utility
-    ├── fitting.py / plotting.py    # Fitting & visualisation
-    ├── probability.py / prior.py   # Probability functions
-    ├── data_processing.py          # Seismic data I/O
     └── vbr/                        # Python VBR calculator
         ├── core.py                 # Elastic, viscous, anelastic calculations
         ├── params.py               # Method parameter defaults
         ├── thermal.py              # Solidus & thermal models
-        └── generate_sweep.py       # Parameter sweep generation
+        └── generate_sweep.py       # Parameter sweep generation (incl. viscosity)
 ```
 
 ## Documentation
