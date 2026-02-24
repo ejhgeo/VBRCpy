@@ -194,12 +194,14 @@ def generate_parameter_sweep(
     n_P = len(P_GPa)
     
     # Initialize output Box structure
-    # Box[method]['meanVs'] and Box[method]['meanQ'] have shape (nT, nphi, ngs, nP)
+    # Box[method]['meanVs'], Box[method]['meanQ'], Box[method]['meanEta']
+    # all have shape (nT, nphi, ngs, nP)
     Box = {}
     for method in params.anelastic_methods:
         Box[method] = {
             'meanVs': np.zeros((n_T, n_phi, n_gs, n_P)),
             'meanQ': np.zeros((n_T, n_phi, n_gs, n_P)),
+            'meanEta': np.zeros((n_T, n_phi, n_gs, n_P)),
         }
     
     # Create 3D grids for T, phi, gs
@@ -270,7 +272,13 @@ def generate_parameter_sweep(
         
         vbr.run()
         
-        # Extract mean Vs and Q for each method
+        # Extract mean Vs, Q, and viscosity for each method
+        # Viscosity comes from HK2003 composite (eta_total) — same for all
+        # anelastic methods since it depends only on T, P, phi, gs.
+        eta_total = None
+        if 'HK2003' in vbr.output.get('viscous', {}):
+            eta_total = vbr.output['viscous']['HK2003']['eta_total']  # (nT, nphi, ngs)
+        
         for method in params.anelastic_methods:
             if method in vbr.output['anelastic']:
                 result = vbr.output['anelastic'][method]
@@ -281,6 +289,10 @@ def generate_parameter_sweep(
                 # Mean over frequency dimension (last axis)
                 Box[method]['meanVs'][:, :, :, i_P] = np.mean(V, axis=-1)
                 Box[method]['meanQ'][:, :, :, i_P] = np.mean(Q, axis=-1)
+                
+                # Viscosity (Pa·s) — not frequency-dependent
+                if eta_total is not None:
+                    Box[method]['meanEta'][:, :, :, i_P] = eta_total
         
         step_time = time.time() - step_start
         if verbose:
@@ -375,10 +387,13 @@ def _save_sweep_mat(sweep: Dict[str, Any], filename: str, verbose: bool = True) 
             for i_gs in range(n_gs):
                 elem = {}
                 for method in methods:
-                    elem[method] = {
+                    method_data = {
                         'meanVs': sweep['Box'][method]['meanVs'][i_T, i_phi, i_gs, :],
                         'meanQ': sweep['Box'][method]['meanQ'][i_T, i_phi, i_gs, :],
                     }
+                    if 'meanEta' in sweep['Box'][method]:
+                        method_data['meanEta'] = sweep['Box'][method]['meanEta'][i_T, i_phi, i_gs, :]
+                    elem[method] = method_data
                 Box[i_T, i_phi, i_gs] = elem
     
     # Build the sweep structure
@@ -427,6 +442,8 @@ def _save_sweep_npz(sweep: Dict[str, Any], filename: str, verbose: bool = True) 
     for method, data in sweep['Box'].items():
         save_dict[f'Box_{method}_meanVs'] = data['meanVs']
         save_dict[f'Box_{method}_meanQ'] = data['meanQ']
+        if 'meanEta' in data:
+            save_dict[f'Box_{method}_meanEta'] = data['meanEta']
     
     np.savez_compressed(filename, **save_dict)
     
@@ -525,10 +542,12 @@ def _load_sweep_mat(filename: str) -> Dict[str, Any]:
     methods = ['andrade_psp', 'eburgers_psp', 'xfit_mxw', 'xfit_premelt']
     
     box = {}
+    has_eta = False
     for method in methods:
         box[method] = {
             'meanVs': np.zeros((nT, nphi, ngs, nz)),
             'meanQ': np.zeros((nT, nphi, ngs, nz)),
+            'meanEta': np.zeros((nT, nphi, ngs, nz)),
         }
     
     # Try to extract from Box structure
@@ -548,6 +567,15 @@ def _load_sweep_mat(filename: str) -> Dict[str, Any]:
                             q_vals = np.atleast_1d(method_obj.meanQ)
                             box[method]['meanVs'][i_T, i_phi, i_gs, :] = vs_vals
                             box[method]['meanQ'][i_T, i_phi, i_gs, :] = q_vals
+                        if hasattr(method_obj, 'meanEta'):
+                            eta_vals = np.atleast_1d(method_obj.meanEta)
+                            box[method]['meanEta'][i_T, i_phi, i_gs, :] = eta_vals
+                            has_eta = True
+    
+    # If no eta was found in the sweep file, remove the empty arrays
+    if not has_eta:
+        for method in methods:
+            del box[method]['meanEta']
     
     sweep['Box'] = box
     return sweep
@@ -582,6 +610,9 @@ def _load_sweep_npz(filename: str) -> Dict[str, Any]:
             'meanVs': data[f'Box_{method}_meanVs'],
             'meanQ': data[f'Box_{method}_meanQ'],
         }
+        eta_key = f'Box_{method}_meanEta'
+        if eta_key in data:
+            box[method]['meanEta'] = data[eta_key]
     
     sweep['Box'] = box
     return sweep

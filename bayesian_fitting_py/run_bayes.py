@@ -40,6 +40,7 @@ from .fitting import (
     extract_ml_from_joint,
 )
 from .prior import store_ensemble
+from .parallel import run_locations_parallel
 from .plotting import (
     plot_tradeoffs_posterior,
     plot_regional_fits,
@@ -129,6 +130,11 @@ class InversionConfig:
     # For large-scale runs, option to save ML estimates to CSV
     save_ml_csv: bool = False
     ml_csv_file: str = 'ml_estimates.csv'
+    
+    # Parallelization: number of worker processes for large-scale runs.
+    # 0 = auto (use all available CPU cores), 1 = sequential (no parallelization),
+    # N>1 = use N worker processes.  Only used for large-scale (preloaded) runs.
+    parallel_workers: int = 1
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -492,13 +498,71 @@ def run_bayesian_inversion(
     sweep = None  # Will be loaded on first iteration
     first_run = True
     
+    # Resolve parallel worker count
+    n_workers = config.parallel_workers
+    if n_workers == 0:
+        import multiprocessing as mp
+        n_workers = mp.cpu_count() or 1
+    
+    # For parallel mode, pre-load sweep before entering the method loop
+    if n_workers > 1 and use_preloaded:
+        print(f"Parallel mode: {n_workers} workers — pre-loading sweep data...")
+        sweep = load_sweep_data(config.sweep_file)
+        first_run = False
+    
     # Loop over anelastic methods
     for anelastic_method in config.anelastic_methods:
         print(f"Calculating inference for {anelastic_method}")
         regional_fits[anelastic_method] = {}
         ml_estimates[anelastic_method] = {}
         
-        # Loop over locations
+        # ----- Parallel path (preloaded observations, multiple workers) -----
+        if use_preloaded and n_workers > 1:
+            import time as _time
+            _t0 = _time.time()
+            par_results = run_locations_parallel(
+                locations, names, z_ranges,
+                seismic_model_data, sweep, anelastic_method,
+                grain_size_prior, config,
+                n_workers=n_workers,
+            )
+            _elapsed = _time.time() - _t0
+            print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")
+
+            # Collect results back into the same data structures
+            for res in par_results:
+                if res is None:
+                    continue
+                locname = res['locname']
+                ml_est = res['ml_est']
+                ml_estimates[anelastic_method][locname] = ml_est
+
+                if res['record'] is not None:
+                    ml_records.append(res['record'])
+
+                if not large_scale_run or n_locations <= 1000:
+                    # Build a minimal posterior-like dict for store_ensemble
+                    post_stub = {
+                        'phi': res['posterior_phi'],
+                        'T': res['posterior_T'],
+                    }
+                    ensemble_pdf = store_ensemble(
+                        ensemble_pdf, locname, anelastic_method,
+                        res['p_joint'], post_stub, include_mxw=True,
+                    )
+                    ensemble_pdf_no_mxw = store_ensemble(
+                        ensemble_pdf_no_mxw, locname, anelastic_method,
+                        res['p_joint'], post_stub, include_mxw=False,
+                    )
+                    regional_fits[anelastic_method][locname] = {
+                        'p_joint': res['p_joint'],
+                        'phi_post': res['posterior_phi'],
+                        'T_post': res['posterior_T'],
+                    }
+
+            continue  # next anelastic_method — skip the sequential loop below
+        
+        # ----- Sequential path (original behavior) -----
         for il, (lat, lon) in enumerate(locations):
             locname = names[il]
             z_min, z_max = z_ranges[il]
@@ -614,6 +678,11 @@ def run_bayesian_inversion(
                 record['gs_ml_mm'] = ml_est['gs']['ml_mm']
                 record['gs_std_mm'] = ml_est['gs']['std_mm']
                 record['gs_mean_mm'] = ml_est['gs']['mean_mm']
+                # Viscosity (log10 Pa·s) — full posterior if available
+                if 'log10_eta' in ml_est:
+                    record['log10_eta_ml'] = ml_est['log10_eta']['ml']
+                    record['log10_eta_std'] = ml_est['log10_eta']['std']
+                    record['log10_eta_mean'] = ml_est['log10_eta']['mean']
                 chi2_total = 0.0
                 n_obs = 0
                 if 'obs_Vs' in ml_est:
@@ -831,10 +900,10 @@ def print_ml_summary(
         
         # State variables section
         print("\n  State Variables (inverted from seismic observations):")
-        print("  " + "-" * 75)
-        print(f"  {'Location':<18} {'T (°C)':<18} {'φ (melt frac)':<18} {'d (mm)':<18}")
-        print(f"  {'':<18} {'ML ± σ':<18} {'ML ± σ':<18} {'ML ± σ':<18}")
-        print("  " + "-" * 75)
+        print("  " + "-" * 93)
+        print(f"  {'Location':<18} {'T (°C)':<18} {'φ (melt frac)':<18} {'d (mm)':<18} {'log₁₀η (Pa·s)':<18}")
+        print(f"  {'':<18} {'ML ± σ':<18} {'ML ± σ':<18} {'ML ± σ':<18} {'ML ± σ':<18}")
+        print("  " + "-" * 93)
         
         for locname in names:
             if locname not in ml_estimates[method]:
@@ -844,8 +913,12 @@ def print_ml_summary(
             T_str = f"{est['T']['ml']:.0f} ± {est['T']['std']:.0f}"
             phi_str = f"{est['phi']['ml']:.4f} ± {est['phi']['std']:.4f}"
             gs_str = f"{est['gs']['ml_mm']:.2f} ± {est['gs']['std_mm']:.2f}"
+            if 'log10_eta' in est:
+                eta_str = f"{est['log10_eta']['ml']:.1f} ± {est['log10_eta']['std']:.1f}"
+            else:
+                eta_str = "N/A"
             
-            print(f"  {locname:<18} {T_str:<18} {phi_str:<18} {gs_str:<18}")
+            print(f"  {locname:<18} {T_str:<18} {phi_str:<18} {gs_str:<18} {eta_str:<18}")
         
         # Data fit section (observed vs predicted)
         print("\n  Data Fit (observed vs predicted at ML solution):")
@@ -1048,6 +1121,14 @@ Examples:
         '--csv-file', type=str, default=None,
         help='Output CSV filename (default: auto-generated based on run parameters)'
     )
+    parser.add_argument(
+        '--parallel', '-j', type=int, default=None, metavar='N',
+        help=(
+            'Number of parallel worker processes for large-scale runs. '
+            '0 = auto (all CPU cores), 1 = sequential (default). '
+            'Only used with preloaded model modes (csv_model, mat_model, netcdf_model).'
+        )
+    )
     
     args = parser.parse_args()
     
@@ -1107,6 +1188,8 @@ Examples:
         config.save_ml_csv = True
     if args.csv_file is not None:
         config.ml_csv_file = args.csv_file
+    if args.parallel is not None:
+        config.parallel_workers = args.parallel
     
     # Run the inversion
     results = run_bayesian_inversion(config, working_dir=args.data_dir)

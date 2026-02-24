@@ -272,6 +272,13 @@ def fit_seismic_observations(
         )
         sweep['meanQ'] = mean_q
     
+    # Extract viscosity if available in the sweep
+    if 'meanEta' in sweep.get('Box', {}).get(anelastic_method, {}):
+        mean_eta, _ = extract_calculated_values_in_depth_range(
+            sweep, 'Eta', anelastic_method, (location.z_min, location.z_max)
+        )
+        sweep['meanEta'] = mean_eta
+    
     # Build parameter grid and set up priors
     params = make_param_grid(sweep['state_names'], sweep)
     
@@ -436,6 +443,14 @@ def fit_preloaded_observations(
             sweep, 'Q', anelastic_method, (z_min, z_max)
         )
         sweep['meanQ'] = mean_q
+    
+    # Extract viscosity if available in the sweep
+    if 'meanEta' in sweep.get('Box', {}).get(anelastic_method, {}):
+        from .data_processing import extract_calculated_values_in_depth_range
+        mean_eta, _ = extract_calculated_values_in_depth_range(
+            sweep, 'Eta', anelastic_method, (z_min, z_max)
+        )
+        sweep['meanEta'] = mean_eta
     
     # Build parameter grid and set up priors
     params = make_param_grid(sweep['state_names'], sweep)
@@ -603,6 +618,55 @@ def extract_ml_estimates(
             estimates['predicted_Vs'] = float(sweep['meanVs'][i_T, i_phi, i_gs])
         if 'meanQ' in sweep:
             estimates['predicted_Q'] = float(sweep['meanQ'][i_T, i_phi, i_gs])
+        
+        # Compute full viscosity posterior from the joint posterior
+        # Each (T, phi, gs) point maps to a unique log10(eta), so we
+        # can compute the posterior PDF of log10(eta) by binning.
+        if 'meanEta' in sweep:
+            eta_grid = sweep['meanEta']  # (nT, nphi, ngs)
+            # Predicted eta at the MAP estimate
+            eta_at_map = float(eta_grid[i_T, i_phi, i_gs])
+            estimates['predicted_eta'] = eta_at_map
+            
+            # Compute log10(eta) posterior using the full joint posterior
+            log10_eta_grid = np.log10(np.clip(eta_grid, 1e10, None))  # floor at 1e10 Pa·s
+            log10_eta_flat = log10_eta_grid.ravel()
+            pS_flat = pS.ravel()
+            
+            # Create bins spanning the range of log10(eta) values
+            eta_min = np.floor(log10_eta_flat.min() * 2) / 2  # round down to 0.5
+            eta_max = np.ceil(log10_eta_flat.max() * 2) / 2   # round up to 0.5
+            n_bins = max(int((eta_max - eta_min) / 0.05), 50)
+            bin_edges = np.linspace(eta_min, eta_max, n_bins + 1)
+            bin_centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+            
+            # Accumulate posterior probability into bins
+            marginal_eta = np.zeros(n_bins)
+            bin_idx = np.digitize(log10_eta_flat, bin_edges) - 1
+            bin_idx = np.clip(bin_idx, 0, n_bins - 1)
+            for bi in range(n_bins):
+                mask = bin_idx == bi
+                marginal_eta[bi] = pS_flat[mask].sum()
+            
+            if marginal_eta.sum() > 0:
+                marginal_eta /= marginal_eta.sum()
+                
+                ml_idx_eta = np.argmax(marginal_eta)
+                ml_log10_eta = float(bin_centres[ml_idx_eta])
+                mean_log10_eta = float(np.sum(marginal_eta * bin_centres))
+                std_log10_eta = float(np.sqrt(np.sum(marginal_eta * (bin_centres - mean_log10_eta)**2)))
+                
+                estimates['log10_eta'] = {
+                    'ml': ml_log10_eta,
+                    'mean': mean_log10_eta,
+                    'std': std_log10_eta,
+                }
+            else:
+                estimates['log10_eta'] = {
+                    'ml': np.log10(eta_at_map) if eta_at_map > 0 else np.nan,
+                    'mean': np.nan,
+                    'std': np.nan,
+                }
     
     return estimates
 

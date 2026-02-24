@@ -441,17 +441,12 @@ def extract_calculated_values_in_depth_range(
     # Get the field name in the Box
     field_name = f'mean{obs_name}'
     
-    # Box is indexed as [anelastic_method][field_name] with shape (nT, nphi, ngs)
+    # Box is indexed as [anelastic_method][field_name] with shape (nT, nphi, ngs, nz)
     box = sweep['Box']
-    box_shape = box[anelastic_method][field_name].shape[:3]  # (nT, nphi, ngs)
+    data = box[anelastic_method][field_name]
     
-    mean_val = np.zeros(box_shape)
-    
-    for i in range(box_shape[0]):
-        for j in range(box_shape[1]):
-            for k in range(box_shape[2]):
-                vals = box[anelastic_method][field_name][i, j, k, z_inds]
-                mean_val[i, j, k] = np.mean(vals)
+    # Vectorized mean over the matching depth indices
+    mean_val = np.mean(data[:, :, :, z_inds], axis=3)
     
     return mean_val, z_inds
 
