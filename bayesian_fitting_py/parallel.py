@@ -261,6 +261,12 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _process_one_location_indexed(indexed_args):
+    """Wrapper that preserves index for imap_unordered ordering."""
+    idx, args = indexed_args
+    return idx, _process_one_location(args)
+
+
 # ---------------------------------------------------------------------------
 # Batch dispatcher
 # ---------------------------------------------------------------------------
@@ -365,9 +371,33 @@ def run_locations_parallel(
             results.append(_process_one_location(args))
     else:
         import multiprocessing as mp
+        import time as _time
+
         print(f"     Dispatching {n_locations} locations across {n_workers} workers...")
+        chunksize = max(1, n_locations // (n_workers * 4))
+        results = [None] * n_locations
+        n_done = 0
+        report_interval = max(1, n_locations // 20)  # ~5% increments
+        t_start = _time.time()
+
         with mp.Pool(processes=n_workers) as pool:
-            results = pool.map(_process_one_location, job_args, chunksize=max(1, n_locations // (n_workers * 4)))
+            for res in pool.imap_unordered(
+                _process_one_location_indexed, enumerate(job_args), chunksize=chunksize
+            ):
+                idx, result = res
+                results[idx] = result
+                n_done += 1
+                if n_done % report_interval == 0 or n_done == n_locations:
+                    elapsed = _time.time() - t_start
+                    rate = n_done / elapsed if elapsed > 0 else 0
+                    eta = (n_locations - n_done) / rate if rate > 0 else 0
+                    print(
+                        f"     [{n_done}/{n_locations}] "
+                        f"{100*n_done/n_locations:.0f}% done — "
+                        f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining "
+                        f"({rate:.1f} loc/s)"
+                    )
+
         n_ok = sum(1 for r in results if r is not None)
         print(f"     Completed {n_ok}/{n_locations} locations successfully")
 

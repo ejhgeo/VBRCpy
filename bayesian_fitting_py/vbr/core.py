@@ -1158,7 +1158,7 @@ class VBR:
         Beta_p = params['Beta'] if include_melt else 0
         
         A_p = np.zeros_like(Tn)
-        A_p[Tn >= Ap_pts[2]] = params['Ap_fac_3'] + Beta_p * phi[Tn >= Ap_pts[2]]
+        A_p[Tn >= Ap_pts[2]] = params['Ap_fac_3'] + Beta_p * phi[Tn >= Ap_pts[2]] # beta_p(phi) not * phi?
         A_p[(Tn >= Ap_pts[1]) & (Tn < Ap_pts[2])] = params['Ap_fac_3']
         
         mask = (Tn >= Ap_pts[0]) & (Tn < Ap_pts[1])

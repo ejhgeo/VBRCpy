@@ -693,13 +693,10 @@ def _load_3d_tomography(
         raise ValueError(f"No depths found in range {z_range} km. "
                         f"Model depth range: {np.unique(depths).min():.1f} to {np.unique(depths).max():.1f} km")
     
-    # Subsample if requested
+    # Subsample laterally if requested (keep all depths)
     if subsample > 1:
         unique_lats = unique_lats[::subsample]
         unique_lons = unique_lons[::subsample]
-        unique_depths = unique_depths[::subsample]
-        spacing_below = spacing_below[::subsample]
-        spacing_above = spacing_above[::subsample]
     
     # Build depth-to-spacing lookup
     depth_spacing = {}
@@ -766,7 +763,7 @@ def _load_2d_tomography(
         grid_lats = np.unique(lats)
         grid_lons = np.unique(lons)
     
-    # Subsample if requested
+    # Subsample laterally if requested
     if subsample > 1:
         grid_lats = grid_lats[::subsample]
         grid_lons = grid_lons[::subsample]
@@ -941,9 +938,13 @@ def load_seismic_model_from_csv(
         if len(df) == 0:
             raise ValueError(f"No data in depth range {z_range}")
     
-    # Subsample if requested
+    # Subsample laterally if requested (keep all depths)
     if subsample > 1:
-        df = df.iloc[::subsample].copy()
+        unique_lats = np.unique(df['lat'].values)
+        unique_lons = np.unique(df['lon'].values)
+        sub_lats = set(unique_lats[::subsample].tolist())
+        sub_lons = set(unique_lons[::subsample].tolist())
+        df = df[df['lat'].isin(sub_lats) & df['lon'].isin(sub_lons)].copy()
     
     # Calculate z_ranges based on depth spacing
     depth_to_range = _calculate_depth_ranges(df['depth'].values)
@@ -1375,15 +1376,13 @@ def load_seismic_model_from_netcdf(
     if len(depths) == 0:
         raise ValueError(f"No data in depth range {z_range}")
     
-    # Subsample
+    # Subsample laterally only (keep all depths)
     if subsample > 1:
         lats = lats[::subsample]
         lons = lons[::subsample]
-        depths = depths[::subsample]
         ds = ds.isel({
             lat_dim: slice(None, None, subsample),
             lon_dim: slice(None, None, subsample),
-            depth_dim: slice(None, None, subsample),
         })
     
     # Find Vs variable
