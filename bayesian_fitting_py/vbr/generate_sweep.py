@@ -10,14 +10,80 @@ separately from the inversion itself.
 
 import numpy as np
 from scipy.io import savemat
+from scipy.interpolate import interp1d
+from scipy.integrate import cumulative_trapezoid
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
+from pathlib import Path
 import time
 import os
 
 from .core import VBR, StateVariables
 from .thermal import calculate_solidus_K
 from .params import C2K
+
+# Earth radius in meters (for PREM radius→depth conversion)
+R_EARTH_M = 6_371_000.0
+
+
+def load_density_profile(model: str = 'prem',
+                         filepath: Optional[str] = None) -> interp1d:
+    """
+    Load a depth-dependent density profile and return an interpolation function.
+
+    Parameters
+    ----------
+    model : str
+        Density model to use:
+        - ``'prem'``: built-in PREM reference model (Dziewonski & Anderson, 1981)
+        - ``'custom'``: user-supplied CSV file
+    filepath : str, optional
+        Path to a custom density CSV.  Required when *model* is ``'custom'``.
+        The file must contain at least two columns named ``depth_km`` and
+        ``density`` (kg/m³), with one header row.
+
+    Returns
+    -------
+    scipy.interpolate.interp1d
+        Interpolation function mapping depth in **meters** to density in
+        kg/m³.  Extrapolates linearly outside the data range.
+    """
+    if model == 'prem':
+        prem_file = Path(__file__).parent / 'PREM_for_VBRc.csv'
+        data = np.genfromtxt(prem_file, delimiter=',', skip_header=1)
+        radius_m = data[:, 0]
+        density = data[:, 1]  # kg/m³
+        depth_m = R_EARTH_M - radius_m
+
+        # Sort ascending by depth
+        sort_idx = np.argsort(depth_m)
+        depth_m = depth_m[sort_idx]
+        density = density[sort_idx]
+
+        # Average duplicate depths (PREM has two entries at discontinuities)
+        unique_depths, inv = np.unique(depth_m, return_inverse=True)
+        unique_density = np.zeros(len(unique_depths))
+        for i in range(len(unique_depths)):
+            unique_density[i] = np.mean(density[inv == i])
+
+        return interp1d(unique_depths, unique_density,
+                        kind='linear', fill_value='extrapolate',
+                        bounds_error=False)
+
+    elif model == 'custom':
+        if filepath is None:
+            raise ValueError("filepath is required when model='custom'")
+        data = np.genfromtxt(filepath, delimiter=',', names=True)
+        depth_m = data['depth_km'] * 1e3
+        density = data['density']
+        sort_idx = np.argsort(depth_m)
+        return interp1d(depth_m[sort_idx], density[sort_idx],
+                        kind='linear', fill_value='extrapolate',
+                        bounds_error=False)
+
+    else:
+        raise ValueError(f"Unknown density model '{model}'. "
+                         "Use 'prem' or 'custom'.")
 
 
 @dataclass
@@ -46,7 +112,13 @@ class SweepParams:
     n_freq : int
         Number of frequency points (default: 10)
     rho : float
-        Density in kg/m^3 (default: 3300)
+        Density in kg/m^3 used when density_model='constant' (default: 3300)
+    density_model : str
+        Density model: 'constant' (uniform rho), 'prem' (depth-dependent PREM),
+        or 'custom' (user-provided CSV). Default: 'constant'.
+    density_file : str or None
+        Path to custom density CSV (required when density_model='custom').
+        File must have columns ``depth_km`` and ``density`` (kg/m³).
     sig_MPa : float
         Differential stress in MPa (default: 0.1)
     Ch2o : float
@@ -59,6 +131,12 @@ class SweepParams:
         Grain size spacing: 'linear' or 'log' (default: 'log')
     output_file : str
         Output filename (default: 'sweep.mat')
+    elastic_method : str
+        Base elastic method: 'anharmonic' (linear Taylor expansion, olivine
+        parameters — suitable for upper mantle) or 'cammarano2003' (Cammarano
+        et al. 2003 finite-strain mineral physics with depth-dependent
+        mineralogy — suitable for upper mantle through lower mantle).
+        Default: 'anharmonic'.
     temperature_scaling : str
         Elastic temperature derivative source: 'isaak', 'cammarano', or 'upper_mantle' 
         (default: 'isaak')
@@ -87,6 +165,8 @@ class SweepParams:
     freq_log_min: float = -2.2  # log10(f_min)
     freq_log_max: float = -1.3  # log10(f_max)
     rho: float = 3300.0
+    density_model: str = 'constant'  # 'constant', 'prem', or 'custom'
+    density_file: Optional[str] = None  # path to custom density CSV
     sig_MPa: float = 0.1
     Ch2o: float = 0.0
     anelastic_methods: List[str] = field(default_factory=lambda: [
@@ -95,7 +175,10 @@ class SweepParams:
     eburgers_method: str = 'FastBurger'
     gs_type: str = 'log'
     output_file: str = 'sweep.mat'
-    # Elastic scaling options (for anharmonic calculations)
+    # Elastic method: 'anharmonic' (linear Taylor expansion, olivine-based) or
+    # 'cammarano2003' (finite-strain mineral physics with depth-dependent mineralogy)
+    elastic_method: str = 'anharmonic'  # Options: 'anharmonic', 'cammarano2003'
+    # Elastic scaling options (for anharmonic calculations only)
     temperature_scaling: str = 'isaak'  # Options: 'isaak', 'cammarano', 'upper_mantle'
     pressure_scaling: str = 'cammarano'  # Options: 'cammarano', 'abramson', 'upper_mantle'
     reference_scaling: str = 'default'  # Options: 'default', 'upper_mantle'
@@ -166,22 +249,52 @@ def generate_parameter_sweep(
         print("=" * 60)
         print("VBR Parameter Sweep Generator")
         print("=" * 60)
-        print(f"Temperature derivatives from: {params.temperature_scaling}")
-        print(f"Pressure Derivatives from: {params.pressure_scaling}")
-        print(f"Reference scaling set to: {params.reference_scaling}")
+        print(f"Elastic method: {params.elastic_method}")
+        if params.elastic_method == 'anharmonic':
+            print(f"  Temperature derivatives from: {params.temperature_scaling}")
+            print(f"  Pressure derivatives from: {params.pressure_scaling}")
+            print(f"  Reference scaling set to: {params.reference_scaling}")
+        elif params.elastic_method == 'cammarano2003':
+            print(f"  Cammarano et al. (2003) finite-strain mineral physics")
+            print(f"  Composition: pyrolite (depth-dependent assemblage)")
         print(f"Temperature: {len(params.T)} values from {params.T.min():.0f} to {params.T.max():.0f} °C")
         print(f"Melt fraction: {len(params.phi)} values from {params.phi.min():.4f} to {params.phi.max():.4f}")
         print(f"Grain size: {len(params.gs)} values from {params.gs.min():.0f} to {params.gs.max():.0f} μm")
         print(f"Depth range: {params.z_min:.0f} to {params.z_max:.0f} km ({params.n_z} points)")
         print(f"Period range: {params.per_bw_min:.0f} to {params.per_bw_max:.0f} s")
         print(f"Methods: {', '.join(params.anelastic_methods)}")
+        # Density info
+        if params.density_model == 'constant':
+            print(f"Density: constant {params.rho:.0f} kg/m³")
+        else:
+            print(f"Density: depth-dependent ({params.density_model})")
+            if params.density_file:
+                print(f"  Custom file: {params.density_file}")
         n_total = len(params.T) * len(params.phi) * len(params.gs) * params.n_z
         print(f"Total calculations: {n_total:,}")
         print("=" * 60)
     
-    # Create depth and pressure arrays
+    # Create depth array (meters)
     z = np.linspace(params.z_min, params.z_max, params.n_z) * 1e3  # Convert to meters
-    P_GPa = z * params.rho * 9.8 / 1e9
+
+    # Compute pressure and per-depth density
+    if params.density_model == 'constant':
+        P_GPa = z * params.rho * 9.8 / 1e9
+        rho_at_depth = np.full(params.n_z, params.rho)
+    else:
+        rho_func = load_density_profile(params.density_model, params.density_file)
+        rho_at_depth = rho_func(z)
+        if verbose:
+            print(f"  Density range over sweep depths: "
+                  f"{rho_at_depth.min():.0f} – {rho_at_depth.max():.0f} kg/m³")
+        # Lithostatic pressure: P(z) = g * ∫₀ᶻ ρ(z') dz'
+        # Use a fine grid from surface to deepest sweep depth for accuracy
+        n_fine = max(1000, params.n_z * 10)
+        z_fine = np.linspace(0, z.max(), n_fine)
+        rho_fine = rho_func(z_fine)
+        P_fine_Pa = np.zeros(n_fine)
+        P_fine_Pa[1:] = cumulative_trapezoid(rho_fine * 9.8, z_fine)
+        P_GPa = np.interp(z, z_fine, P_fine_Pa / 1e9)
     
     # Frequency array - use explicit logspace exponents to match MATLAB exactly
     # MATLAB uses: VBR.in.SV.f = logspace(-2.2, -1.3, 10)
@@ -224,7 +337,7 @@ def generate_parameter_sweep(
         
         # Create pressure and other state variable arrays matching T_grid shape
         P_arr = np.full(T_grid.shape, P)
-        rho_arr = np.full(T_grid.shape, params.rho)
+        rho_arr = np.full(T_grid.shape, rho_at_depth[i_P])
         sig_arr = np.full(T_grid.shape, params.sig_MPa)
         Ch2o_arr = np.full(T_grid.shape, params.Ch2o)
         
@@ -245,12 +358,12 @@ def generate_parameter_sweep(
             Tsolidus_K=Tsolidus_arr,
         )
         
-        # Determine elastic methods - use anh_poro for poro-elastic melt correction
-        # when we have non-zero melt fraction
+        # Determine elastic methods based on user selection
+        base_elastic = params.elastic_method  # 'anharmonic' or 'cammarano2003'
         if np.any(params.phi > 0):
-            elastic_methods = ['anharmonic', 'anh_poro']
+            elastic_methods = [base_elastic, 'anh_poro']
         else:
-            elastic_methods = ['anharmonic']
+            elastic_methods = [base_elastic]
         
         # Run VBR
         vbr = VBR(
@@ -260,7 +373,7 @@ def generate_parameter_sweep(
             viscous_methods=['HK2003', 'xfit_premelt'] if 'xfit_premelt' in params.anelastic_methods else ['HK2003'],
         )
         
-        # Set elastic scaling options
+        # Set elastic scaling options (only relevant for anharmonic method)
         if 'anharmonic' in elastic_methods:
             vbr.input['elastic']['anharmonic']['temperature_scaling'] = params.temperature_scaling
             vbr.input['elastic']['anharmonic']['pressure_scaling'] = params.pressure_scaling
@@ -311,6 +424,8 @@ def generate_parameter_sweep(
         'gs': params.gs,
         'z': z,
         'P_GPa': P_GPa,
+        'rho': rho_at_depth,  # density at each depth point (kg/m³)
+        'density_model': params.density_model,
         'per_bw_min': params.per_bw_min,
         'per_bw_max': params.per_bw_max,
         'Box': Box,
@@ -403,6 +518,8 @@ def _save_sweep_mat(sweep: Dict[str, Any], filename: str, verbose: bool = True) 
         'gs': sweep['gs'],
         'z': sweep['z'],
         'P_GPa': sweep['P_GPa'],
+        'rho': sweep['rho'],
+        'density_model': sweep.get('density_model', 'constant'),
         'per_bw_min': float(sweep['per_bw_min']),
         'per_bw_max': float(sweep['per_bw_max']),
         'state_names': np.array(sweep['state_names'], dtype=object),
@@ -428,6 +545,8 @@ def _save_sweep_npz(sweep: Dict[str, Any], filename: str, verbose: bool = True) 
         'gs': sweep['gs'],
         'z': sweep['z'],
         'P_GPa': sweep['P_GPa'],
+        'rho': sweep['rho'],
+        'density_model': np.array(sweep.get('density_model', 'constant')),
         'per_bw_min': np.array(sweep['per_bw_min']),
         'per_bw_max': np.array(sweep['per_bw_max']),
         'state_names': np.array(sweep['state_names']),
@@ -509,10 +628,15 @@ def _load_sweep_mat(filename: str) -> Dict[str, Any]:
     sweep = {}
     
     # Extract basic fields
-    for attr in ['T', 'phi', 'gs', 'z', 'P_GPa', 'per_bw_max', 'per_bw_min']:
+    for attr in ['T', 'phi', 'gs', 'z', 'P_GPa', 'rho', 'per_bw_max', 'per_bw_min']:
         if hasattr(sweep_obj, attr):
             value = getattr(sweep_obj, attr)
             sweep[attr] = np.atleast_1d(value)
+    # Density model metadata (may not exist in older files)
+    if hasattr(sweep_obj, 'density_model'):
+        sweep['density_model'] = str(sweep_obj.density_model)
+    else:
+        sweep['density_model'] = 'constant'
     
     sweep['state_names'] = ['T', 'phi', 'gs']
     
@@ -591,6 +715,8 @@ def _load_sweep_npz(filename: str) -> Dict[str, Any]:
         'gs': data['gs'],
         'z': data['z'],
         'P_GPa': data['P_GPa'],
+        'rho': data['rho'] if 'rho' in data else np.full(len(data['z']), 3300.0),
+        'density_model': str(data['density_model']) if 'density_model' in data else 'constant',
         'per_bw_min': float(data['per_bw_min']),
         'per_bw_max': float(data['per_bw_max']),
         'state_names': list(data['state_names']),
@@ -667,7 +793,10 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         log_min: -2.2  # log10(f_min in Hz)
         log_max: -1.3  # log10(f_max in Hz)
       # Physical parameters
-      rho: 3300.0  # density in kg/m^3
+      rho: 3300.0  # density in kg/m^3 (used when density_model is 'constant')
+      # Density model: 'constant', 'prem', or 'custom'
+      density_model: constant
+      # density_file: /path/to/custom.csv  # required when density_model is 'custom'
       sig_MPa: 0.1  # differential stress in MPa
       Ch2o: 0.0  # water content in ppm
       # Methods
@@ -678,6 +807,9 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
       eburgers_method: FastBurger  # or 'PointWise'
       # Elastic scaling options
       elastic:
+        # Method: 'anharmonic' (linear Taylor, olivine) or 'cammarano2003'
+        # (finite-strain mineral physics with depth-dependent mineralogy)
+        method: anharmonic
         # Temperature derivative source: 'isaak', 'cammarano', or 'upper_mantle'
         temperature_scaling: isaak
         # Pressure derivative source: 'cammarano', 'abramson', or 'upper_mantle'
@@ -761,6 +893,8 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
     
     # Parse physical parameters
     rho = cfg.get('rho', 3300.0)
+    density_model = cfg.get('density_model', 'constant')
+    density_file = cfg.get('density_file', None)
     sig_MPa = cfg.get('sig_MPa', 0.1)
     Ch2o = cfg.get('Ch2o', 0.0)
     
@@ -771,10 +905,12 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
     # Parse elastic scaling options
     if 'elastic' in cfg:
         e_cfg = cfg['elastic']
+        elastic_method = e_cfg.get('method', 'anharmonic')
         temperature_scaling = e_cfg.get('temperature_scaling', 'isaak')
         pressure_scaling = e_cfg.get('pressure_scaling', 'cammarano')
         reference_scaling = e_cfg.get('reference_scaling', 'default')
     else:
+        elastic_method = 'anharmonic'
         temperature_scaling = 'isaak'
         pressure_scaling = 'cammarano'
         reference_scaling = 'default'
@@ -792,12 +928,15 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         freq_log_min=freq_log_min,
         freq_log_max=freq_log_max,
         rho=rho,
+        density_model=density_model,
+        density_file=density_file,
         sig_MPa=sig_MPa,
         Ch2o=Ch2o,
         anelastic_methods=anelastic_methods,
         eburgers_method=eburgers_method,
         gs_type=gs_type,
         output_file=cfg.get('output_file', 'sweep.mat'),
+        elastic_method=elastic_method,
         temperature_scaling=temperature_scaling,
         pressure_scaling=pressure_scaling,
         reference_scaling=reference_scaling,
@@ -847,6 +986,16 @@ Examples:
                        default=['eburgers_psp', 'andrade_psp', 'xfit_mxw', 'xfit_premelt'],
                        help='Anelastic methods to calculate')
     
+    # Density options
+    parser.add_argument('--density-model', type=str, default='constant',
+                       choices=['constant', 'prem', 'custom'],
+                       help="Density model: 'constant' (default), 'prem', or 'custom'")
+    parser.add_argument('--density-file', type=str, default=None,
+                       help='Path to custom density CSV (columns: depth_km, density)')
+    parser.add_argument('--elastic-method', type=str, default='anharmonic',
+                       choices=['anharmonic', 'cammarano2003'],
+                       help="Elastic method: 'anharmonic' (default) or 'cammarano2003'")
+    
     parser.add_argument('--quiet', '-q', action='store_true', help='Suppress progress output')
     
     args = parser.parse_args()
@@ -861,6 +1010,9 @@ Examples:
             z_max=args.z_max,
             n_z=args.n_z,
             anelastic_methods=args.methods,
+            elastic_method=args.elastic_method,
+            density_model=args.density_model,
+            density_file=args.density_file,
             output_file=args.output,
         )
     

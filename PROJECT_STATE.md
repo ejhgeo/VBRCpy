@@ -1,8 +1,9 @@
 # vbrc_V2Tpy — Project State Document
 
-> **Last updated:** 2026-02-24
+> **Last updated:** 2026-03-09
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
-> **Latest commit:** `21cb561` — "Add viscosity output and parallel processing support"
+> **Latest commit:** `4c95424` — "Fix lateral-only subsampling, add parallel progress reporting"
+> **Uncommitted changes:** Yes — depth-dependent density, Cammarano 2003, plot_lut updates, depth-range guards
 
 Use this document to bootstrap a new AI chat session on this project.
 Paste it as context and say "Continue working on this project" or ask a specific question.
@@ -12,9 +13,10 @@ Paste it as context and say "Continue working on this project" or ask a specific
 ## 1. What This Project Is
 
 A **Python port of the MATLAB VBR Calculator** (Havlin et al., 2021) focused on
-Bayesian inversion of seismic Vs (and optionally Q) into upper-mantle state
+Bayesian inversion of seismic Vs (and optionally Q) into mantle state
 variables: **temperature (T), melt fraction (φ), grain size (gs), and
-viscosity (η)**.
+viscosity (η)**. Now supports upper mantle through transition zone depths
+via Cammarano et al. (2003) finite-strain mineral physics.
 
 The original MATLAB code lives in the same workspace at
 `/Users/ehightow/Research/V2T_Inversion/vbr/` (upstream VBRc). The Python
@@ -47,10 +49,12 @@ vbrc_V2Tpy/
     ├── fetch_data.py         # interactive data downloader
     └── vbr/                  # VBR core calculations (Python port of MATLAB VBRc)
         ├── core.py           # anelastic methods: andrade_psp, eburgers_psp, xfit_mxw, xfit_premelt
+        ├── cammarano.py      # Cammarano et al. (2003) finite-strain mineral physics
         ├── generate_sweep.py # parameter sweep generation (Box with meanVs, meanQ, meanEta)
         ├── params.py         # default VBR parameters
         ├── thermal.py        # half-space cooling, adiabatic geotherm
-        └── plot_lut.py       # look-up table plotting
+        ├── plot_lut.py       # look-up table plotting (.mat, .npz, .pkl)
+        └── PREM_for_VBRc.csv # PREM density profile for depth-dependent density
 ```
 
 ## 3. Python Environment
@@ -106,6 +110,53 @@ All four methods verified against MATLAB output to floating-point precision:
 | `xfit_premelt` | Pre-melt fit (xfit) |
 
 ## 6. Key Features Implemented
+
+### Cammarano et al. (2003) Finite-Strain Elastic Method (uncommitted)
+- **New file `cammarano.py`**: Full mineral physics module implementing Appendix A
+  of Cammarano et al. (2003) PEPI
+- Mineral database from Table A.1: olivine, wadsleyite, ringwoodite, cpx, opx,
+  garnet (Py-Mj-Alm), Ca-garnet, Mg-perovskite, Ca-perovskite, Mg-wüstite
+- 3rd-order Birch-Murnaghan finite-strain EOS with Newton solver for Eulerian strain
+- Voigt-Reuss-Hill (VRH) averaging for composite mineralogy
+- Automatic assemblage switching based on pressure boundaries:
+  - Upper mantle (<14 GPa / ~410 km): 60% olivine, 12% opx, 14% cpx, 14% garnet
+  - Wadsleyite TZ (14–18 GPa / ~410–520 km): 57% wadsleyite, 28% majorite, 5% cpx, 10% Ca-gt
+  - Ringwoodite TZ (18–23 GPa / ~520–660 km): 57% ringwoodite, 28% majorite, 8% Ca-gt, 7% Ca-pv
+  - Lower mantle (>23 GPa / ~660 km): 75% Mg-pv, 18% Mg-wüstite, 7% Ca-pv
+- **Note:** Mineral assemblage volume fractions are approximate, assembled from
+  general knowledge of Ringwood (1975), Ita & Stixrude (1992). Not directly
+  copied from a single published table. User should verify against preferred source.
+- `core.py` updated: `_el_cammarano2003()` method, `_get_base_elastic_output()` and
+  `_get_unrelaxed_Gu()` helpers so all 4 anelastic methods work with either
+  `anharmonic` or `cammarano2003` elastic backend
+- `params.py` updated: `'cammarano2003'` added to `possible_methods` with X_Fe,
+  composition, pressure boundary config; also fixed missing default scaling keys
+  for `anharmonic` (temperature_scaling, pressure_scaling, reference_scaling)
+- `generate_sweep.py` updated: `elastic_method` field in `SweepParams`, YAML
+  parsing (`elastic.method`), CLI (`--elastic-method cammarano2003`)
+- Config: `elastic.method: cammarano2003` in YAML triggers this path
+
+### Depth-Dependent Density (uncommitted)
+- `generate_sweep.py`: Added `load_density_profile()` function with PREM default
+  and custom CSV option
+- Uses cumulative trapezoid integration for lithostatic pressure instead of
+  `P = ρ * g * z` with constant ρ
+- PREM gives density 3367–3378 kg/m³ in 50–150 km range, ~2–3% higher pressures
+  vs constant 3300
+- New `SweepParams` fields: `density_model` ('constant', 'prem', 'custom'),
+  `density_file` (path to CSV)
+- Bundled `PREM_for_VBRc.csv` in package directory; `pyproject.toml` updated
+  for `*.csv` inclusion
+- YAML config: `density_model: prem`, CLI: `--density-model prem`
+
+### Depth Range Guard (uncommitted)
+- `data_processing.py` and `fitting.py`: `extract_calculated_values_in_depth_range`
+  now raises `ValueError` with clear message when observation depths don't overlap
+  sweep depths (previously returned NaN silently)
+
+### plot_lut.py Multi-Format Support (uncommitted)
+- `_load_sweep_file()` helper auto-detects `.mat`, `.npz`, `.pkl` formats
+- CLI accepts any of these formats as input
 
 ### Viscosity Output (commit `21cb561`)
 - `generate_sweep.py` stores `meanEta` in the Box — HK2003 composite `eta_total`
@@ -178,6 +229,23 @@ pre-computing everything into read-only copies before dispatching workers.
   and can be deleted or gitignored.
 - Consider adding Q observations to the tomography inversions (currently Vs only
   for the WashU model since it doesn't include Q).
+- **ACTIVE BUG — Cammarano 2003 inversion produces bad results:**
+  When sweep is generated with `method: cammarano2003` and Bayesian inversion is run,
+  temperatures are underestimated at all depths (even deeper upper mantle) and
+  viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
+  - **Suspected root cause:** The Cammarano pyrolite model produces lower
+    unrelaxed Vs than the pure-olivine anharmonic model at the same (T, P):
+    - Fe correction reduces olivine G₀ from 81 → 77.9 GPa
+    - VRH averaging with softer non-olivine phases (cpx G₀≈66 GPa, opx G₀≈76 GPa)
+    - Combined effect: lower Gu → lower unrelaxed Vs → matching observed Vs
+      requires cooler T → exponentially higher η
+  - **Also applies at transition zone depths** (not just upper mantle)
+  - The mineral assemblage volume fractions are approximate and could compound the issue
+  - Unit tests (Vs values at individual T, P points) pass correctly; the problem
+    manifests only through the full Bayesian inversion loop
+  - Needs investigation: compare Vs between anharmonic and cammarano2003 at same
+    conditions; validate against published Cammarano velocity profiles; possibly
+    adjust assemblage fractions or Fe content
 
 ## 9. Test Results
 

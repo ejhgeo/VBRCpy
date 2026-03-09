@@ -29,4 +29,4 @@ fetch-vbr-data = "bayesian_fitting_py.fetch_data:_cli_main"
 include = ["bayesian_fitting_py*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml", "*.txt", "*.md"]
+"*" = ["*.yaml", "*.txt", "*.md", "*.csv"]

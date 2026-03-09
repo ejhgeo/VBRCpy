@@ -15,12 +15,12 @@ def plot_lut_slices(
     sweep: Dict[str, Any],
     method: str = 'andrade_psp',
     P_GPa: float = 2.0,
-    T_fixed: float = 1300,
+    T_fixed: float = 2000,
     phi_fixed: float = 0.0,
     gs_fixed_mm: float = 10.0,
     figsize: tuple = (15, 10),
     save_path: Optional[str] = None,
-    T_lim: Optional[tuple] = (1200, 1700),
+    T_lim: Optional[tuple] = (800, 2500),
     phi_lim: Optional[tuple] = (0, 0.025),
     gs_lim_mm: Optional[tuple] = (1, 30),
 ):
@@ -841,25 +841,58 @@ def compare_lut_slices_T_phi(
     return fig
 
 
+def _load_sweep_file(filepath: str) -> Dict[str, Any]:
+    """
+    Load a sweep file in any supported format (.mat, .npz, .pkl/.pickle).
+
+    For .mat files, tries the Python-native loader first (returns a dict),
+    falling back to raw loadmat (returns a MATLAB struct object).
+
+    Returns
+    -------
+    dict or MATLAB struct
+        Sweep data usable by the plotting functions.
+    """
+    import os
+    ext = os.path.splitext(filepath)[1].lower()
+
+    if ext in ('.npz', '.pkl', '.pickle'):
+        from .generate_sweep import load_sweep
+        return load_sweep(filepath)
+
+    # .mat — try the Python-native loader first (gives a dict)
+    try:
+        from .generate_sweep import load_sweep
+        return load_sweep(filepath)
+    except Exception:
+        # Fall back to raw loadmat (returns MATLAB struct, still works
+        # with the isinstance(sweep, dict) branches in the plot funcs)
+        mat = loadmat(filepath, squeeze_me=True, struct_as_record=False)
+        return mat['sweep']
+
+
 if __name__ == '__main__':
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Visualize VBR lookup tables')
-    parser.add_argument('sweep_file', help='Path to sweep .mat file')
-    parser.add_argument('--method', default='andrade_psp', help='Anelastic method')
-    parser.add_argument('--P', type=float, default=2.0, help='Pressure in GPa')
-    parser.add_argument('--compare', help='Reference sweep file for comparison')
-    parser.add_argument('--save', help='Save path for figure')
-    
+
+    parser = argparse.ArgumentParser(
+        description='Visualize VBR lookup tables (.mat, .npz, .pkl)')
+    parser.add_argument('sweep_file',
+                        help='Path to sweep file (.mat, .npz, or .pkl)')
+    parser.add_argument('--method', default='andrade_psp',
+                        help='Anelastic method (default: andrade_psp)')
+    parser.add_argument('--P', type=float, default=2.0,
+                        help='Pressure in GPa for the slice')
+    parser.add_argument('--compare',
+                        help='Reference sweep file for side-by-side comparison')
+    parser.add_argument('--save', help='Save path (file or directory) for figure')
+
     args = parser.parse_args()
-    
-    # Load sweep
-    mat = loadmat(args.sweep_file, squeeze_me=True, struct_as_record=False)
-    sweep = mat['sweep']
-    
+
+    # Load sweep (any format)
+    sweep = _load_sweep_file(args.sweep_file)
+
     if args.compare:
-        ref_mat = loadmat(args.compare, squeeze_me=True, struct_as_record=False)
-        ref_sweep = ref_mat['sweep']
+        ref_sweep = _load_sweep_file(args.compare)
         # Compare new sweep against reference - all three slice types
         compare_lut_slices(ref_sweep, sweep, method=args.method, P_GPa=args.P, save_path=args.save)
         compare_lut_slices_gs_phi(ref_sweep, sweep, method=args.method, P_GPa=args.P, save_path=args.save)

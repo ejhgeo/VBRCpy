@@ -13,6 +13,7 @@ from copy import deepcopy
 
 from .params import Params_Elastic, Params_Anelastic, Params_Viscous, Params_Global
 from .thermal import calculate_solidus_K
+from .cammarano import cammarano_elastic
 
 
 @dataclass
@@ -168,6 +169,25 @@ class VBR:
         
         return self
     
+    def _get_base_elastic_output(self):
+        """Get the base elastic output dict (cammarano2003 or anharmonic).
+
+        Falls back to running anharmonic if neither has been computed.
+        """
+        if 'cammarano2003' in self.output['elastic']:
+            return self.output['elastic']['cammarano2003']
+        elif 'anharmonic' in self.output['elastic']:
+            return self.output['elastic']['anharmonic']
+        else:
+            self._el_anharmonic()
+            return self.output['elastic']['anharmonic']
+
+    def _get_unrelaxed_Gu(self):
+        """Get unrelaxed shear modulus (melt-corrected if available)."""
+        if 'anh_poro' in self.output['elastic']:
+            return self.output['elastic']['anh_poro']['Gu']
+        return self._get_base_elastic_output()['Gu']
+
     def _run_elastic(self):
         """Run elastic calculations."""
         for method in self.elastic_methods:
@@ -175,6 +195,8 @@ class VBR:
                 self._el_anharmonic()
             elif method == 'anh_poro':
                 self._el_anh_poro()
+            elif method == 'cammarano2003':
+                self._el_cammarano2003()
     
     def _run_viscous(self):
         """Run viscous calculations."""
@@ -195,6 +217,58 @@ class VBR:
                 self._Q_andrade_psp()
             elif method == 'xfit_mxw':
                 self._Q_xfit_mxw()
+    
+    def _el_cammarano2003(self):
+        """
+        Calculate anharmonic elastic moduli using Cammarano et al. (2003)
+        finite-strain mineral physics model.
+        
+        Uses depth/pressure-dependent mineral assemblage with 3rd-order
+        Birch-Murnaghan finite-strain theory and Voigt-Reuss-Hill averaging.
+        Automatically selects upper mantle, transition zone, or lower mantle
+        mineralogy based on pressure.
+        """
+        sv = self.sv
+        params = self.input['elastic']['cammarano2003']
+        
+        X_Fe = params.get('X_Fe', 0.1)
+        composition = params.get('composition', 'pyrolite')
+        
+        # P is constant across the 3D grid at each depth step
+        P_GPa_scalar = float(sv.P_GPa.flat[0])
+        
+        # Extract unique temperatures (T varies only along axis 0 in the meshgrid)
+        if sv.T_K.ndim >= 2:
+            T_unique = sv.T_K[:, 0, 0] if sv.T_K.ndim == 3 else sv.T_K[:, 0]
+        else:
+            T_unique = sv.T_K
+        
+        # Compute moduli using Cammarano finite-strain method
+        G_Pa, K_Pa, rho_cam, Vs, Vp = cammarano_elastic(
+            T_unique, P_GPa_scalar, X_Fe=X_Fe, composition=composition)
+        
+        # Broadcast back to full grid shape
+        shape = sv.T_K.shape
+        if len(shape) == 3:
+            Gu = np.broadcast_to(G_Pa[:, np.newaxis, np.newaxis], shape).copy()
+            Ku = np.broadcast_to(K_Pa[:, np.newaxis, np.newaxis], shape).copy()
+            Vsu = np.broadcast_to(Vs[:, np.newaxis, np.newaxis], shape).copy()
+            Vpu = np.broadcast_to(Vp[:, np.newaxis, np.newaxis], shape).copy()
+        elif len(shape) == 2:
+            Gu = np.broadcast_to(G_Pa[:, np.newaxis], shape).copy()
+            Ku = np.broadcast_to(K_Pa[:, np.newaxis], shape).copy()
+            Vsu = np.broadcast_to(Vs[:, np.newaxis], shape).copy()
+            Vpu = np.broadcast_to(Vp[:, np.newaxis], shape).copy()
+        else:
+            Gu, Ku, Vsu, Vpu = G_Pa, K_Pa, Vs, Vp
+        
+        self.output['elastic']['cammarano2003'] = {
+            'Gu': Gu,    # Pa
+            'Ku': Ku,    # Pa
+            'Vpu': Vpu,  # m/s
+            'Vsu': Vsu,  # m/s
+            'units': {'Gu': 'Pa', 'Ku': 'Pa', 'Vpu': 'm/s', 'Vsu': 'm/s'}
+        }
     
     def _el_anharmonic(self):
         """
@@ -283,14 +357,12 @@ class VBR:
         
         Implements Takei 2002, JGR Solid Earth, Appendix A.
         
-        Requires anharmonic to be run first.
+        Requires anharmonic or cammarano2003 to be run first.
         """
-        if 'anharmonic' not in self.output['elastic']:
-            self._el_anharmonic()
+        anh = self._get_base_elastic_output()
         
         sv = self.sv
         params = self.input['elastic']['anh_poro']
-        anh = self.output['elastic']['anharmonic'] # anharmonic moduli, velocities, uncertainty
         
         Gu = anh['Gu']
         Ku = anh['Ku']
@@ -631,10 +703,7 @@ class VBR:
         params = self.input['anelastic']['eburgers_psp']
         
         # Get unrelaxed modulus
-        if 'anh_poro' in self.output['elastic']:
-            Gu = self.output['elastic']['anh_poro']['Gu']
-        elif 'anharmonic' in self.output['elastic']:
-            Gu = self.output['elastic']['anharmonic']['Gu']
+        Gu = self._get_unrelaxed_Gu()
         
         Ju = 1.0 / Gu
         rho = sv.rho
@@ -789,10 +858,7 @@ class VBR:
         params = self.input['anelastic']['eburgers_psp']
         
         # Get unrelaxed modulus
-        if 'anh_poro' in self.output['elastic']:
-            Gu = self.output['elastic']['anh_poro']['Gu']
-        elif 'anharmonic' in self.output['elastic']:
-            Gu = self.output['elastic']['anharmonic']['Gu']
+        Gu = self._get_unrelaxed_Gu()
         
         Ju = 1.0 / Gu
         rho = sv.rho
@@ -1040,17 +1106,14 @@ class VBR:
             sv.Tsolidus_K = calculate_solidus_K(sv.P_GPa, method='hirschmann')
         
         # Get unrelaxed modulus - follows MATLAB Q_xfit_premelt.m logic:
-        # if include_direct_melt_effect == 1 (YT2024): always use anharmonic
+        # if include_direct_melt_effect == 1 (YT2024): always use base elastic
         #   (poroelastic effects applied internally to J1)
         # if include_direct_melt_effect == 0 (YT2016): use anh_poro if available
         #   (standard Q_get_state_vars behavior)
         if params['include_direct_melt_effect'] == 1:
-            Gu = self.output['elastic']['anharmonic']['Gu']
+            Gu = self._get_base_elastic_output()['Gu']
         else:
-            if 'anh_poro' in self.output['elastic']:
-                Gu = self.output['elastic']['anh_poro']['Gu']
-            else:
-                Gu = self.output['elastic']['anharmonic']['Gu']
+            Gu = self._get_unrelaxed_Gu()
         Ju = 1.0 / Gu
         rho = sv.rho
         phi = sv.phi
@@ -1187,10 +1250,7 @@ class VBR:
         params = self.input['anelastic']['andrade_psp']
         
         # Get unrelaxed modulus (use anh_poro if available for melt-corrected moduli)
-        if 'anh_poro' in self.output['elastic']:
-            Gu = self.output['elastic']['anh_poro']['Gu']
-        else:
-            Gu = self.output['elastic']['anharmonic']['Gu']
+        Gu = self._get_unrelaxed_Gu()
         Ju = 1.0 / Gu
         rho = sv.rho
         
@@ -1309,10 +1369,7 @@ class VBR:
         params = self.input['anelastic']['xfit_mxw']
         
         # Get unrelaxed modulus - use anh_poro if available (matches Q_get_state_vars)
-        if 'anh_poro' in self.output['elastic']:
-            Gu = self.output['elastic']['anh_poro']['Gu']
-        else:
-            Gu = self.output['elastic']['anharmonic']['Gu']
+        Gu = self._get_unrelaxed_Gu()
         Ju = 1.0 / Gu
         rho = sv.rho
         

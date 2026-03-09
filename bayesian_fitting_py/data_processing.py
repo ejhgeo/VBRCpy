@@ -438,6 +438,16 @@ def extract_calculated_values_in_depth_range(
         (z >= depth_range_m[0]) & (z <= depth_range_m[1])
     )[0]
     
+    if len(z_inds) == 0:
+        sweep_zmin_km = z.min() / 1e3
+        sweep_zmax_km = z.max() / 1e3
+        raise ValueError(
+            f"No sweep depths fall within the observation depth range "
+            f"({depth_range[0]:.0f}–{depth_range[1]:.0f} km). "
+            f"The sweep covers {sweep_zmin_km:.0f}–{sweep_zmax_km:.0f} km. "
+            f"Regenerate the sweep with a depth range that covers your observations."
+        )
+    
     # Get the field name in the Box
     field_name = f'mean{obs_name}'
     

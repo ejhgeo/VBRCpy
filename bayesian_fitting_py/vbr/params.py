@@ -92,7 +92,7 @@ def Params_Elastic(method: str = '') -> Dict[str, Any]:
     dict
         Parameter dictionary for the method
     """
-    params = {'possible_methods': ['anharmonic', 'anh_poro', 'SLB2005']}
+    params = {'possible_methods': ['anharmonic', 'anh_poro', 'cammarano2003', 'SLB2005']}
     
     if method == 'anharmonic':
         params['func_name'] = 'el_anharmonic'
@@ -104,9 +104,9 @@ def Params_Elastic(method: str = '') -> Dict[str, Any]:
         
         # Temperature scaling options
         # Default to 'isaak' for both T and P to match Havlin et al. 2021
-        # params['temperature_scaling'] = 'isaak'
-        # params['pressure_scaling'] = 'cammarano'  # Changed from 'cammarano' to match paper
-        # params['reference_scaling'] = 'default'
+        params['temperature_scaling'] = 'isaak'
+        params['pressure_scaling'] = 'cammarano'
+        params['reference_scaling'] = 'default'
         
         # Isaak 1992 derivatives + Havlin et al. 2021 (quoting Isaak 1992) pressure scaling
         # From Havlin et al., 2021 paper: dG/dT = -13.6 MPa/K, dG/dP = 1.8, G0 = 80 GPa
@@ -180,6 +180,23 @@ def Params_Elastic(method: str = '') -> Dict[str, Any]:
 
     elif method == 'SLB2005':   # Stixrude and Lithgow-Bertelloni 2005 fit of upper mantle Vs
         params['func_name'] = 'slb2005' # el_Vs_SnLG_f in Matlab
+
+    elif method == 'cammarano2003':
+        # Cammarano et al. (2003) finite-strain mineral physics model.
+        # Uses depth/pressure-dependent mineral assemblage with 3rd-order
+        # Birch-Murnaghan EOS and Voigt-Reuss-Hill averaging.
+        params['func_name'] = 'el_cammarano2003'
+        params['X_Fe'] = 0.1          # Iron mole fraction (Mg# = 0.9)
+        params['composition'] = 'pyrolite'  # 'pyrolite' or 'custom'
+        
+        # Pressure boundaries for assemblage switching (GPa)
+        # Approx: 14 GPa ~ 410 km, 18 GPa ~ 520 km, 23 GPa ~ 660 km
+        params['P_boundary_410'] = 14.0   # olivine → wadsleyite
+        params['P_boundary_520'] = 18.0   # wadsleyite → ringwoodite
+        params['P_boundary_660'] = 23.0   # ringwoodite → perovskite+mw
+        
+        params['note'] = ('Uses Table A.1 mineral parameters and Appendix A '
+                          'finite-strain method from Cammarano et al. (2003) PEPI.')
         
     return params
 

@@ -82,17 +82,33 @@ sweep_generation:
   output_file: sweep_fixed.mat
 
   # --------------------------------------------------------------------------
-  # Anelastic options 
+  # Elastic options 
   # --------------------------------------------------------------------------
   elastic:
+    # Method: 'anharmonic' (linear Taylor expansion, olivine-based, fast) or
+    #         'cammarano2003' (finite-strain mineral physics with depth-dependent
+    #         mineralogy from Cammarano et al. 2003 — required for transition
+    #         zone and lower mantle depths)
+    method: anharmonic
+    # Options below only apply to 'anharmonic' method:
     temperature_scaling: isaak    # or 'isaak', 'cammarano'
     pressure_scaling: cammarano   # or 'cammarano', 'abramson'
     reference_scaling: default    # or 'default'
 
   # --------------------------------------------------------------------------
+  # Density model
+  # --------------------------------------------------------------------------
+  # Options:
+  #   'constant'  - uniform density at all depths (default)
+  #   'prem'      - depth-dependent density from PREM (Dziewonski & Anderson, 1981)
+  #   'custom'    - user-supplied CSV with columns: depth_km, density (kg/m³)
+  density_model: prem
+  rho: 3300.0              # kg/m^3 (used only when density_model is 'constant')
+  # density_file: /path/to/custom_density.csv  # required when density_model is 'custom'
+
+  # --------------------------------------------------------------------------
   # Other parameters (optional)
   # --------------------------------------------------------------------------
-  # density: 3300          # kg/m^3
-  # stress: 0.1            # MPa
-  # water_content: 0       # ppm
-  # eburgers_method: FastBurger  # or PointWise (default: FastBurger)
+  sig_MPa: 0.1             # differential stress [MPa]
+  Ch2o: 0                  # water content [ppm]
+  eburgers_method: FastBurger  # or 'PointWise' (default: FastBurger)
