@@ -182,6 +182,11 @@ class SweepParams:
     temperature_scaling: str = 'isaak'  # Options: 'isaak', 'cammarano', 'upper_mantle'
     pressure_scaling: str = 'cammarano'  # Options: 'cammarano', 'abramson', 'upper_mantle'
     reference_scaling: str = 'default'  # Options: 'default', 'upper_mantle'
+    solidus_method: str = 'hirschmann'  # Options: 'hirschmann', 'katz', 'yk2001'
+    # Lookup-table plot options
+    plot_lut: bool = False            # generate LUT figures during sweep
+    plot_lut_dir: str = 'lut_plots'   # output directory for LUT figures
+    plot_lut_every_n: int = 1         # plot every n-th depth (1 = all)
     
     def __post_init__(self):
         """Convert to numpy arrays."""
@@ -341,8 +346,14 @@ def generate_parameter_sweep(
         sig_arr = np.full(T_grid.shape, params.sig_MPa)
         Ch2o_arr = np.full(T_grid.shape, params.Ch2o)
         
-        # Calculate solidus at this pressure
-        Tsolidus_K = calculate_solidus_K(P, method='hirschmann')
+        # Calculate solidus at this pressure/depth
+        Tsolidus_K = calculate_solidus_K(
+            P, method=params.solidus_method,
+            depth_km=z[i_P] / 1e3,
+            density_model=params.density_model,
+            density_rho=params.rho,
+            density_file=params.density_file,
+        )
         Tsolidus_arr = np.full(T_grid.shape, Tsolidus_K)
         
         # Create state variables
@@ -901,6 +912,7 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
     # Parse methods
     anelastic_methods = cfg.get('anelastic_methods', ['eburgers_psp', 'andrade_psp', 'xfit_mxw', 'xfit_premelt'])
     eburgers_method = cfg.get('eburgers_method', 'FastBurger')
+    solidus_method = cfg.get('solidus_method', 'hirschmann')
     
     # Parse elastic scaling options
     if 'elastic' in cfg:
@@ -915,6 +927,21 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         pressure_scaling = 'cammarano'
         reference_scaling = 'default'
     
+    # Parse LUT plot options
+    plot_cfg = cfg.get('plot_lut', {})
+    if isinstance(plot_cfg, bool):
+        plot_lut = plot_cfg
+        plot_lut_dir = 'lut_plots'
+        plot_lut_every_n = 1
+    elif isinstance(plot_cfg, dict):
+        plot_lut = plot_cfg.get('enabled', False)
+        plot_lut_dir = plot_cfg.get('output_dir', 'lut_plots')
+        plot_lut_every_n = plot_cfg.get('every_n', 1)
+    else:
+        plot_lut = False
+        plot_lut_dir = 'lut_plots'
+        plot_lut_every_n = 1
+
     return SweepParams(
         T=T,
         phi=phi,
@@ -940,6 +967,10 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         temperature_scaling=temperature_scaling,
         pressure_scaling=pressure_scaling,
         reference_scaling=reference_scaling,
+        solidus_method=solidus_method,
+        plot_lut=plot_lut,
+        plot_lut_dir=plot_lut_dir,
+        plot_lut_every_n=plot_lut_every_n,
     )
 
 
@@ -1018,6 +1049,17 @@ Examples:
     
     sweep = generate_parameter_sweep(params, verbose=not args.quiet)
     save_sweep(sweep, params.output_file, verbose=not args.quiet)
+
+    # Generate LUT plots if requested
+    if params.plot_lut:
+        from .plot_lut import generate_sweep_lut_plots
+        if not args.quiet:
+            print(f"\nGenerating LUT plots (every {params.plot_lut_every_n} depths)...")
+        generate_sweep_lut_plots(
+            sweep, params.plot_lut_dir,
+            every_n=params.plot_lut_every_n,
+            verbose=not args.quiet,
+        )
 
 
 if __name__ == '__main__':

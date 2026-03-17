@@ -104,6 +104,7 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
         locname,
         lat, lon,
         z_min, z_max,
+        use_vs, use_q,
         obs_vs, sigma_vs,
         obs_q, sigma_q,
         depth_key,        # (z_min, z_max) tuple used to look up pre-averaged grids
@@ -119,8 +120,10 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
     ) = args
 
     try:
-        vs_exists = obs_vs is not None and sigma_vs is not None
-        q_exists = obs_q is not None and sigma_q is not None
+        # Honour the config-level obs_types flags (use_vs / use_q) so that
+        # data presence alone does not override the user's intent.
+        vs_exists = use_vs and obs_vs is not None and sigma_vs is not None
+        q_exists = use_q and obs_q is not None and sigma_q is not None
         if not vs_exists and not q_exists:
             return None
 
@@ -281,6 +284,8 @@ def run_locations_parallel(
     grain_size_prior,
     config,
     n_workers: int = 1,
+    use_vs: bool = True,
+    use_q: bool = True,
 ) -> List[Optional[Dict[str, Any]]]:
     """
     Process all locations for one anelastic method, optionally in parallel.
@@ -289,7 +294,14 @@ def run_locations_parallel(
     ----------
     n_workers : int
         Number of worker processes (1 = sequential, >1 = multiprocessing).
+    use_vs : bool
+        Whether Vs observations should be used.
+    use_q : bool
+        Whether Q observations should be used.
     """
+    if not use_vs and not use_q:
+        raise ValueError("At least one of use_vs or use_q must be True")
+
     n_locations = len(locations)
     use_preloaded = seismic_model_data is not None
     has_depth_col = (use_preloaded and seismic_model_data.depths is not None)
@@ -332,14 +344,14 @@ def run_locations_parallel(
         depth_val = None
 
         if use_preloaded:
-            if seismic_model_data.Vs is not None:
+            if use_vs and seismic_model_data.Vs is not None:
                 obs_vs = float(seismic_model_data.Vs[il])
                 sigma_vs = (
                     float(seismic_model_data.Vs_error[il])
                     if seismic_model_data.Vs_error is not None
                     else config.default_vs_error
                 )
-            if seismic_model_data.Q is not None:
+            if use_q and seismic_model_data.Q is not None:
                 obs_q = float(seismic_model_data.Q[il])
                 sigma_q = (
                     float(seismic_model_data.Q_error[il])
@@ -351,6 +363,7 @@ def run_locations_parallel(
 
         job_args.append((
             il, locname, lat, lon, z_min, z_max,
+            use_vs, use_q,
             obs_vs, sigma_vs, obs_q, sigma_q,
             depth_key, precomputed,
             prior_statevars, sweep_vectors,

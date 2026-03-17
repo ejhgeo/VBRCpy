@@ -267,6 +267,10 @@ def Params_Anelastic(method: str = '', global_params: Optional[Params_Global] = 
         
     elif method == 'xfit_premelt':
         params['func_name'] = 'Q_xfit_premelt'
+        params['solidus_method'] = 'hirschmann'  # solidus parameterization
+        params['density_model'] = 'constant'     # for YK2001 P-to-depth conversion
+        params['density_rho'] = 3400.0            # constant density (kg/m^3)
+        params['density_file'] = None             # custom density CSV path
         # High temp background spectrum
         params['alpha_B'] = 0.38    # high temp background exponent
         params['A_B'] = 0.664       # high temp background dissipation strength
@@ -444,6 +448,10 @@ def Params_Viscous(method: str = '', global_params: Optional[Params_Global] = No
     
     elif method == 'xfit_premelt':
         params['func_name'] = 'visc_calc_xfit_premelt' # shouldn't this be _visc_xfit_premelt
+        params['solidus_method'] = 'hirschmann'  # solidus parameterization
+        params['density_model'] = 'constant'     # for YK2001 P-to-depth conversion
+        params['density_rho'] = 3400.0            # constant density (kg/m^3)
+        params['density_file'] = None             # custom density CSV path
         
         # Near-solidus and melt effects
         params['alpha'] = 30  # lambda in YT2016

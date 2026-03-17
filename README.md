@@ -68,6 +68,7 @@ python -m bayesian_fitting_py --list-methods
 - **Parallel processing**: multiprocessing support for large-scale tomography runs
 - **Multiple input modes**: manual locations, CSV, MAT, NetCDF seismic models
 - **Pure-Python VBR calculator** — generate parameter sweeps without MATLAB
+- **MATLAB benchmark validation** — automated comparison against original VBRc output
 - **Publication-quality plots** with posterior PDFs, T–φ trade-offs, and ensemble summaries
 
 ## Project Layout
@@ -77,6 +78,10 @@ vbrc_V2Tpy/
 ├── pyproject.toml                  # Package metadata & dependencies
 ├── data/                           # Fetched data files (git-ignored)
 ├── config_example_*.yaml           # Example configuration files
+├── validation/                     # Validation & testing framework
+│   ├── validate_roundtrip.py       # Self-contained adiabat round-trip test
+│   ├── syntheticTest_adiabat/      # Realistic config/CLI pipeline test
+│   └── benchmarkTest_vsMatlab/     # Python vs MATLAB VBRc benchmark
 └── bayesian_fitting_py/            # Python package
     ├── run_bayes.py                # Main inversion driver & CLI
     ├── fitting.py                  # Fitting functions & ML estimation
@@ -89,6 +94,7 @@ vbrc_V2Tpy/
         ├── core.py                 # Elastic, viscous, anelastic calculations
         ├── params.py               # Method parameter defaults
         ├── thermal.py              # Solidus & thermal models
+        ├── plot_lut.py             # Look-up table plotting & comparison
         └── generate_sweep.py       # Parameter sweep generation (incl. viscosity)
 ```
 
@@ -102,6 +108,26 @@ documentation including:
 - YAML / JSON configuration reference
 - VBR calculator API and sweep generation
 - Available methods and solidus calculations
+
+## Validation
+
+```bash
+cd /Users/ehightow/Research/V2T_Inversion
+
+# Benchmark: compare Python vs MATLAB VBRc (sweep comparison, LUT plots, inversion)
+python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+
+# Self-contained round-trip validation
+python -m vbrc_V2Tpy.validation.validate_roundtrip \
+    --output validation_results/roundtrip_rhoprem_anharmonic \
+    --elastic anharmonic --density prem --solidus hirschmann
+
+# Synthetic adiabat test (realistic CLI pipeline)
+python -m vbrc_V2Tpy.validation.syntheticTest_adiabat
+```
+
+All validation output is written to `validation_results/` in the workspace
+root (outside the git repository).
 
 ## Uninstall
 

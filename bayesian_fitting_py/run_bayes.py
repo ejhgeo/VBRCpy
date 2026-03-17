@@ -8,6 +8,7 @@ Translated from MATLAB Projects/bayesian_fitting/run_bayes.m
 """
 
 import os
+import sys
 import json
 import numpy as np
 from pathlib import Path
@@ -126,6 +127,7 @@ class InversionConfig:
     # Output settings
     output_dir: str = 'plots/output_plots'
     save_plots: bool = True
+    force_plots: bool = False  # Force posterior plots even for large-scale runs
     
     # For large-scale runs, option to save ML estimates to CSV
     save_ml_csv: bool = False
@@ -459,9 +461,28 @@ def run_bayesian_inversion(
     # Determine if this is a large-scale run (affects output behavior)
     large_scale_run = n_locations > 20
     if large_scale_run:
-        print("Large-scale run detected - will save summary CSV and suppress individual plots")
-        # Override plot settings for large runs
-        save_individual_plots = False
+        n_methods = len(config.anelastic_methods)
+        n_plots = n_locations * n_methods
+        if config.force_plots and config.save_plots:
+            print(f"\nWarning: this will generate {n_plots} posterior plots "
+                  f"({n_locations} locations × {n_methods} method(s)).")
+            if sys.stdin.isatty():
+                print("Are you sure you want to force plotting output? [y/N] ", end='')
+                sys.stdout.flush()
+                answer = input().strip().lower()
+                if answer in ('y', 'yes'):
+                    print("Forcing individual plots for large-scale run.")
+                    save_individual_plots = True
+                else:
+                    print("Plot generation cancelled — suppressing individual plots.")
+                    save_individual_plots = False
+            else:
+                # Non-interactive (e.g. subprocess) — honor force_plots without prompt
+                print("Non-interactive mode — forcing individual plots.")
+                save_individual_plots = True
+        else:
+            print("Large-scale run detected - will save summary CSV and suppress individual plots")
+            save_individual_plots = False
         config.save_ml_csv = True  # Force CSV output for large runs
     else:
         save_individual_plots = config.save_plots
@@ -525,6 +546,8 @@ def run_bayesian_inversion(
                 seismic_model_data, sweep, anelastic_method,
                 grain_size_prior, config,
                 n_workers=n_workers,
+                use_vs=use_vs,
+                use_q=use_q,
             )
             _elapsed = _time.time() - _t0
             print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")
@@ -592,10 +615,10 @@ def run_bayesian_inversion(
                     obs_q = None
                     sigma_q = None
                     
-                    if seismic_model_data.Vs is not None:
+                    if use_vs and seismic_model_data.Vs is not None:
                         obs_vs = float(seismic_model_data.Vs[il])
                         sigma_vs = float(seismic_model_data.Vs_error[il]) if seismic_model_data.Vs_error is not None else config.default_vs_error
-                    if seismic_model_data.Q is not None:
+                    if use_q and seismic_model_data.Q is not None:
                         obs_q = float(seismic_model_data.Q[il])
                         sigma_q = float(seismic_model_data.Q_error[il]) if seismic_model_data.Q_error is not None else config.default_q_error
                     
@@ -636,8 +659,13 @@ def run_bayesian_inversion(
             # Save plots (only for small runs)
             if save_individual_plots:
                 print("        saving plots...")
+                # Get depth for title/filename
+                depth_km = None
+                if use_preloaded and seismic_model_data.depths is not None:
+                    depth_km = float(seismic_model_data.depths[il])
                 save_figure_for_posterior(
-                    posterior, sweep, locname, anelastic_method, output_dir, obs_label
+                    posterior, sweep, locname, anelastic_method, output_dir, obs_label,
+                    depth_km=depth_km,
                 )
                 print(f"        plots saved to {output_dir}/")
             
@@ -1060,6 +1088,10 @@ Examples:
         help='Disable plot generation'
     )
     parser.add_argument(
+        '--force-plots', action='store_true',
+        help='Force posterior plots even for large-scale runs (>20 locations)'
+    )
+    parser.add_argument(
         '--obs-types', type=str, default=None,
         choices=['Vs', 'Q', 'VsQ'],
         help='Observation types to use: Vs only, Q only, or both (VsQ)'
@@ -1165,6 +1197,8 @@ Examples:
         config.output_dir = args.output_dir
     if args.no_plots:
         config.save_plots = False
+    if args.force_plots:
+        config.force_plots = True
     if args.obs_types is not None:
         config.obs_types = args.obs_types
     if args.anelastic_methods is not None:

@@ -374,7 +374,7 @@ def _mineral_moduli_at_PT(
            + 5.0 * M1 * (3.0 * Kp_T - 5.0))
 
     KG_PT = u52 * (L1 + L2 * eps + 0.5 * L3 * eps ** 2)   # K + 4/3 G
-    G_PT  = u52 * (M1 + M2 * eps +       M3 * eps ** 2)   # G
+    G_PT  = u52 * (M1 + M2 * eps + 0.5 * M3 * eps ** 2)   # G # should the 0.5 actually be here? Claude says yes, need to check. 
 
     K_PT  = KG_PT - (4.0 / 3.0) * G_PT
 

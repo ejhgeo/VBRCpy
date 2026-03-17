@@ -5,10 +5,230 @@ Visualize VBR lookup tables (LUT).
 Creates figures like Fig. 7 from the paper showing Vs and Q as functions
 of temperature, grain size, and melt fraction at fixed pressure/depth.
 """
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+
+
+def plot_lut_at_depth(
+    sweep: Dict[str, Any],
+    method: str,
+    depth_km: float,
+    T_fixed: float = 2000,
+    phi_fixed: float = 0.0,
+    gs_fixed_mm: float = 10.0,
+    figsize: tuple = (15, 10),
+    save_dir: Optional[str] = None,
+    T_lim: Optional[tuple] = None,
+    phi_lim: Optional[tuple] = None,
+    gs_lim_mm: Optional[tuple] = None,
+) -> Optional[plt.Figure]:
+    """
+    Plot lookup table slices at a specific depth, labelled by depth (km).
+
+    Parameters
+    ----------
+    sweep : dict
+        Sweep dict from generate_parameter_sweep (must have 'z' in metres).
+    method : str
+        Anelastic method to plot.
+    depth_km : float
+        Target depth in km.
+    T_fixed, phi_fixed, gs_fixed_mm : float
+        Slice coordinates for the fixed-variable panels.
+    figsize : tuple
+        Figure size.
+    save_dir : str, optional
+        Directory to save figure. Filename is auto-generated from depth.
+    T_lim, phi_lim, gs_lim_mm : tuple, optional
+        Axis limits.
+
+    Returns
+    -------
+    matplotlib.figure.Figure or None
+        The figure object, or None if the figure was saved and closed.
+    """
+    T_arr = np.atleast_1d(sweep['T'])
+    phi_arr = np.atleast_1d(sweep['phi'])
+    gs_arr = np.atleast_1d(sweep['gs'])
+    z_m = np.atleast_1d(sweep['z'])
+    z_km = z_m / 1e3
+    P_arr = np.atleast_1d(sweep['P_GPa'])
+
+    # Find depth index
+    i_z = int(np.argmin(np.abs(z_km - depth_km)))
+    actual_depth = z_km[i_z]
+    actual_P = P_arr[i_z]
+
+    # Fixed-variable indices
+    i_T_fixed = int(np.argmin(np.abs(T_arr - T_fixed)))
+    i_phi_fixed = int(np.argmin(np.abs(phi_arr - phi_fixed)))
+    i_gs_fixed = int(np.argmin(np.abs(gs_arr - gs_fixed_mm * 1000)))
+
+    # Extract slices
+    Vs = sweep['Box'][method]['meanVs'][:, :, :, i_z]
+    Q = sweep['Box'][method]['meanQ'][:, :, :, i_z]
+
+    gs_mm = gs_arr / 1000
+
+    # Adaptive colour ranges based on data
+    Vs_valid = Vs[np.isfinite(Vs)]
+    Q_valid = Q[np.isfinite(Q) & (Q > 0)]
+    Vs_vmin = float(np.percentile(Vs_valid, 5)) if len(Vs_valid) else 4.0
+    Vs_vmax = float(np.percentile(Vs_valid, 95)) if len(Vs_valid) else 5.6
+    Q_vmin = 1 #float(np.percentile(Q_valid, 2)) if len(Q_valid) else 10
+    Q_vmax = 1000 #float(np.percentile(Q_valid, 98)) if len(Q_valid) else 200
+
+    Vs_levels = np.linspace(Vs_vmin, Vs_vmax, 21)
+    Q_levels = np.linspace(Q_vmin, Q_vmax, 21)
+    cmap = 'RdBu'
+
+    fig = plt.figure(figsize=figsize)
+    gs_spec = fig.add_gridspec(2, 4, width_ratios=[1, 1, 1, 0.05],
+                               wspace=0.3, hspace=0.25)
+    axes = np.array([[fig.add_subplot(gs_spec[i, j]) for j in range(3)]
+                     for i in range(2)])
+    cax_vs = fig.add_subplot(gs_spec[0, 3])
+    cax_q = fig.add_subplot(gs_spec[1, 3])
+
+    # ---- Row 0: Vs   Row 1: Q ----
+    # Panel (0,0)/(1,0): T fixed → φ vs gs
+    for row, (data, levels, vmin, vmax, cax, label) in enumerate([
+        (Vs, Vs_levels, Vs_vmin, Vs_vmax, cax_vs, 'Vs (km/s)'),
+        (Q, Q_levels, Q_vmin, Q_vmax, cax_q, 'Q'),
+    ]):
+        # Col 0: T fixed
+        ax = axes[row, 0]
+        im = ax.contourf(gs_mm, phi_arr, data[i_T_fixed, :, :],
+                         levels=levels, cmap=cmap, vmin=vmin, vmax=vmax,
+                         extend='both')
+        ax.contour(gs_mm, phi_arr, data[i_T_fixed, :, :],
+                   levels=10, colors='k', linewidths=0.5, linestyles='--')
+        ax.set_xlabel('Grain Size (mm)')
+        ax.set_ylabel('Melt Fraction, φ')
+        if row == 0:
+            ax.set_title(f'T = {T_arr[i_T_fixed]:.0f} °C')
+
+        # Col 1: φ fixed
+        ax = axes[row, 1]
+        ax.contourf(gs_mm, T_arr, data[:, i_phi_fixed, :],
+                    levels=levels, cmap=cmap, vmin=vmin, vmax=vmax,
+                    extend='both')
+        ax.contour(gs_mm, T_arr, data[:, i_phi_fixed, :],
+                   levels=10, colors='k', linewidths=0.5, linestyles='--')
+        ax.set_xlabel('Grain Size (mm)')
+        ax.set_ylabel('Temperature (°C)')
+        if row == 0:
+            ax.set_title(f'φ = {phi_arr[i_phi_fixed]:.4f}')
+
+        # Col 2: gs fixed
+        ax = axes[row, 2]
+        ax.contourf(phi_arr, T_arr, data[:, :, i_gs_fixed],
+                    levels=levels, cmap=cmap, vmin=vmin, vmax=vmax,
+                    extend='both')
+        ax.contour(phi_arr, T_arr, data[:, :, i_gs_fixed],
+                   levels=10, colors='k', linewidths=0.5, linestyles='--')
+        ax.set_xlabel('Melt Fraction, φ')
+        ax.set_ylabel('Temperature (°C)')
+        if row == 0:
+            ax.set_title(f'd = {gs_arr[i_gs_fixed]/1000:.1f} mm')
+
+        fig.colorbar(im, cax=cax, label=label)
+
+    # Axis limits
+    for ax in axes.flatten():
+        xl = ax.get_xlabel()
+        yl = ax.get_ylabel()
+        if 'Grain Size' in xl and gs_lim_mm is not None:
+            ax.set_xlim(gs_lim_mm)
+        if 'Melt Fraction' in xl and phi_lim is not None:
+            ax.set_xlim(phi_lim)
+        if 'Melt Fraction' in yl and phi_lim is not None:
+            ax.set_ylim(phi_lim)
+        if 'Temperature' in yl and T_lim is not None:
+            ax.set_ylim(T_lim)
+
+    per_min = sweep.get('per_bw_min', 0)
+    per_max = sweep.get('per_bw_max', 0)
+    fig.suptitle(f'Vs & Q – {method}  |  depth = {actual_depth:.1f} km  '
+                 f'({actual_P:.2f} GPa, {per_min:.0f}–{per_max:.0f} s)',
+                 fontsize=14)
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        fname = f'lut_{method}_{actual_depth:.0f}km.png'
+        fpath = os.path.join(save_dir, fname)
+        plt.savefig(fpath, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        return None
+    return fig
+
+
+def generate_sweep_lut_plots(
+    sweep: Dict[str, Any],
+    output_dir: str,
+    methods: Optional[List[str]] = None,
+    every_n: int = 1,
+    T_fixed: float = 2000,
+    phi_fixed: float = 0.0,
+    gs_fixed_mm: float = 10.0,
+    T_lim: Optional[tuple] = None,
+    phi_lim: Optional[tuple] = None,
+    gs_lim_mm: Optional[tuple] = None,
+    verbose: bool = True,
+) -> int:
+    """
+    Generate lookup-table figures for every (or every *n*-th) depth in a sweep.
+
+    Parameters
+    ----------
+    sweep : dict
+        Sweep dict from generate_parameter_sweep.
+    output_dir : str
+        Directory to save figures.
+    methods : list of str, optional
+        Anelastic methods to plot. Defaults to all in sweep.
+    every_n : int
+        Plot every n-th depth (1 = all, 5 = every 5th, etc.).
+    T_fixed, phi_fixed, gs_fixed_mm : float
+        Slice coordinates for the fixed-variable panels.
+    T_lim, phi_lim, gs_lim_mm : tuple, optional
+        Axis limits.
+    verbose : bool
+        Print progress.
+
+    Returns
+    -------
+    int
+        Number of figures saved.
+    """
+    import matplotlib
+    matplotlib.use('Agg')  # non-interactive backend for batch
+
+    if methods is None:
+        methods = list(sweep['Box'].keys())
+    z_km = np.atleast_1d(sweep['z']) / 1e3
+    depth_indices = list(range(0, len(z_km), max(1, every_n)))
+
+    n_saved = 0
+    for method in methods:
+        method_dir = os.path.join(output_dir, method)
+        for idx in depth_indices:
+            d = z_km[idx]
+            plot_lut_at_depth(
+                sweep, method, d,
+                T_fixed=T_fixed, phi_fixed=phi_fixed,
+                gs_fixed_mm=gs_fixed_mm, save_dir=method_dir,
+                T_lim=T_lim, phi_lim=phi_lim, gs_lim_mm=gs_lim_mm,
+            )
+            n_saved += 1
+        if verbose:
+            print(f"  {method}: saved {len(depth_indices)} LUT plots to {method_dir}/")
+    if verbose:
+        print(f"Total LUT figures: {n_saved}")
+    return n_saved
 
 
 def plot_lut_slices(
@@ -116,7 +336,7 @@ def plot_lut_slices(
     gs_mm = gs_arr / 1000
     
     # Fixed color ranges
-    Vs_vmin, Vs_vmax = 4.1, 4.6  # km/s
+    Vs_vmin, Vs_vmax = 4.1, 5.6  # km/s
     Q_vmin, Q_vmax = 10, 150
     
     # Create level arrays for consistent contours

@@ -1,0 +1,51 @@
+# ============================================================================
+# Sweep generation config for the round-trip validation example.
+#
+# Run with:
+#   python -m vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep \
+#       --config vbrc_V2Tpy/validation/syntheticTest_adiabat/sweep_config.yaml
+# ============================================================================
+
+sweep_generation:
+  temperature:
+    min: 800
+    max: 2500
+    step: 20
+
+  melt_fraction:
+    min: 0
+    max: 0.05
+    n_points: 21
+    type: linear
+
+  grain_size:
+    min: 100       # 0.1 mm
+    max: 30000     # 30 mm
+    n_points: 25
+    type: log
+
+  depth:
+    min: 10
+    max: 660
+    n_points: 131  # gives exactly 5 km spacing
+
+  freq_log_min: -2.2
+  freq_log_max: -1.3
+  n_freq: 10
+
+  anelastic_methods:
+    - xfit_premelt
+
+  output_file: validation_results/syntheticTest_adiabat/sweep.npz
+
+  elastic:
+    method: anharmonic
+
+  density_model: prem
+
+  solidus_method: hirschmann
+
+  plot_lut:
+    enabled: true
+    output_dir: validation_results/syntheticTest_adiabat/lut_plots
+    every_n: 13   # plot every ~13th depth (≈10 plots)

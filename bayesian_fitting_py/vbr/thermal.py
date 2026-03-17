@@ -5,17 +5,26 @@ Includes solidus calculations with volatile dependence.
 """
 
 import numpy as np
-from typing import Dict, Any, Union
+from pathlib import Path
+from typing import Dict, Any, Optional, Union
 from numpy.typing import ArrayLike
+from scipy.integrate import cumulative_trapezoid
+from scipy.interpolate import interp1d
 
 from .params import C2K
+
+R_EARTH_M = 6371e3  # Earth radius in meters
 
 
 def solidus(
     P_Pa: ArrayLike,
     H2O: ArrayLike = 0.0,
     CO2: ArrayLike = 0.0,
-    method: str = 'hirschmann'
+    method: str = 'hirschmann',
+    depth_km: Optional[ArrayLike] = None,
+    density_model: str = 'constant',
+    density_rho: float = 3400.0,
+    density_file: Optional[str] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Calculate peridotite solidus with volatile dependence.
@@ -33,7 +42,17 @@ def solidus(
     CO2 : array_like
         Weight percent of CO2 in the melt phase
     method : str
-        Which dry solidus to use: 'katz' or 'hirschmann'
+        Which dry solidus to use: 'katz', 'hirschmann', or 'yk2001'
+    depth_km : array_like, optional
+        Depth in km. Only used by 'yk2001'. When provided, bypasses
+        pressure-to-depth conversion for self-consistency.
+    density_model : str
+        Density model for P-to-depth conversion ('constant', 'prem', or
+        'custom'). Only used by 'yk2001' when *depth_km* is None.
+    density_rho : float
+        Constant density in kg/m³. Only used when density_model='constant'.
+    density_file : str, optional
+        Path to custom density CSV. Required when density_model='custom'.
         
     Returns
     -------
@@ -75,6 +94,15 @@ def solidus(
         sol = _solidus_hirschmann(P_GPa)
         result['Tsol_dry'] = sol['Tsol_dry']
         result['Tsol'] = sol['Tsol_dry'] - dT_H2O - dT_CO2
+    elif method.lower() == 'yk2001':
+        _depth_km = np.atleast_1d(depth_km).astype(float) if depth_km is not None else None
+        sol = _solidus_yk2001(
+            P_GPa, depth_km=_depth_km,
+            density_model=density_model, density_rho=density_rho,
+            density_file=density_file,
+        )
+        result['Tsol_dry'] = sol['Tsol_dry']
+        result['Tsol'] = sol['Tsol_dry'] - dT_H2O - dT_CO2
     else:
         raise ValueError(f"Unknown solidus method: {method}")
     
@@ -114,6 +142,12 @@ def _solidus_katz(P_GPa: np.ndarray) -> Dict[str, np.ndarray]:
     Tlherz_dry = B1 + B2 * P_GPa + B3 * P_GPa**2    #lherzolite liquidus
     Tliq_dry = C1 + C2 * P_GPa + C3 * P_GPa**2      # true liquidus
     
+    # Warn if extrapolating beyond calibration range
+    P_max_sol = -A2 / (2 * A3)  # ~13.0 GPa
+    if np.any(P_GPa > P_max_sol):
+        print(f"Warning: Katz solidus extrapolated beyond quadratic maximum "
+              f"(P > {P_max_sol:.1f} GPa). Solidus may decrease unphysically.")
+    
     return {
         'Tsol_dry': Tsol_dry,
         'Tlherz_dry': Tlherz_dry,
@@ -142,6 +176,141 @@ def _solidus_hirschmann(P_GPa: np.ndarray) -> Dict[str, np.ndarray]:
     
     Tsol_dry = A1 + A2 * P_GPa + A3 * P_GPa**2
     
+    # Warn if extrapolating beyond calibration range
+    P_max = -A2 / (2 * A3)  # ~11.8 GPa
+    if np.any(P_GPa > P_max):
+        print(f"Warning: Hirschmann solidus extrapolated beyond quadratic maximum "
+              f"(P > {P_max:.1f} GPa). Solidus may decrease unphysically.")
+    
+    return {'Tsol_dry': Tsol_dry}
+
+
+def _pressure_to_depth_km(
+    P_GPa: np.ndarray,
+    density_model: str = 'constant',
+    density_rho: float = 3400.0,
+    density_file: Optional[str] = None,
+) -> np.ndarray:
+    """
+    Convert pressure (GPa) to depth (km) using a specified density model.
+
+    Parameters
+    ----------
+    P_GPa : array
+        Pressure in GPa.
+    density_model : str
+        ``'constant'`` for a uniform density, or ``'prem'`` / ``'custom'``
+        for a depth-dependent radial Earth model.
+    density_rho : float
+        Density in kg/m³ (used only when *density_model* is ``'constant'``).
+    density_file : str, optional
+        Path to a custom density CSV (columns ``depth_km``, ``density``).
+        Required when *density_model* is ``'custom'``.
+
+    Returns
+    -------
+    array
+        Depth in km.
+    """
+    g = 9.81  # m/s²
+
+    if density_model == 'constant':
+        return P_GPa * 1e9 / (density_rho * g) / 1e3
+
+    # Build a forward z → P(z) profile from the density model, then invert
+    if density_model == 'prem':
+        prem_file = Path(__file__).parent / 'PREM_for_VBRc.csv'
+        data = np.genfromtxt(prem_file, delimiter=',', skip_header=1)
+        radius_m = data[:, 0]
+        density = data[:, 1]
+        depth_m = R_EARTH_M - radius_m
+        sort_idx = np.argsort(depth_m)
+        depth_m = depth_m[sort_idx]
+        density = density[sort_idx]
+        # Average duplicate depths at discontinuities
+        unique_depths, inv = np.unique(depth_m, return_inverse=True)
+        unique_density = np.zeros(len(unique_depths))
+        for i in range(len(unique_depths)):
+            unique_density[i] = np.mean(density[inv == i])
+        depth_m = unique_depths
+        density = unique_density
+    elif density_model == 'custom':
+        if density_file is None:
+            raise ValueError("density_file is required when density_model='custom'")
+        csv = np.genfromtxt(density_file, delimiter=',', names=True)
+        depth_m = csv['depth_km'] * 1e3
+        density = csv['density']
+        sort_idx = np.argsort(depth_m)
+        depth_m = depth_m[sort_idx]
+        density = density[sort_idx]
+    else:
+        raise ValueError(
+            f"Unknown density_model '{density_model}'. "
+            "Use 'constant', 'prem', or 'custom'."
+        )
+
+    # Lithostatic pressure: P(z) = g * ∫₀ᶻ ρ(z') dz'
+    P_Pa = np.zeros(len(depth_m))
+    P_Pa[1:] = cumulative_trapezoid(density * g, depth_m)
+    P_GPa_profile = P_Pa / 1e9
+
+    # Invert: interpolate depth as a function of pressure
+    return np.interp(P_GPa, P_GPa_profile, depth_m / 1e3)
+
+
+def _solidus_yk2001(
+    P_GPa: np.ndarray,
+    depth_km: Optional[np.ndarray] = None,
+    density_model: str = 'constant',
+    density_rho: float = 3400.0,
+    density_file: Optional[str] = None,
+) -> Dict[str, np.ndarray]:
+    """
+    Dry peridotite solidus from Yamazaki and Karato (2001).
+
+    Piecewise quadratic parameterization in terms of depth (km).
+    Upper mantle (depth < 660 km):
+        Ts = 2100 + 1.4848 * depth - 5e-4 * depth^2   [K]
+    Lower mantle (depth >= 660 km):
+        Ts = 2916 + 1.25 * depth - 1.65e-4 * depth^2   [K]
+
+    Parameters
+    ----------
+    P_GPa : array
+        Pressure in GPa.
+    depth_km : array, optional
+        Depth in km.  When provided, used directly (avoids P-to-depth
+        conversion).  When *None*, depth is computed from *P_GPa* using the
+        specified density model.
+    density_model : str
+        ``'constant'``, ``'prem'``, or ``'custom'``.  Only used if
+        *depth_km* is None.
+    density_rho : float
+        Constant density in kg/m³ (only used when density_model='constant').
+    density_file : str, optional
+        Path to custom density CSV (only used when density_model='custom').
+
+    Returns
+    -------
+    dict
+        Solidus temperature in C (for consistency with other methods).
+    """
+    if depth_km is None:
+        depth_km = _pressure_to_depth_km(
+            P_GPa, density_model, density_rho, density_file
+        )
+    depth_km = np.atleast_1d(depth_km)
+
+    # Piecewise solidus in Kelvin
+    Tsol_K = np.where(
+        depth_km < 660,
+        2100.0 + 1.4848 * depth_km - 5e-4 * depth_km**2,
+        2916.0 + 1.25 * depth_km - 1.65e-4 * depth_km**2,
+    )
+
+    # Convert K -> C for consistency with other solidus functions
+    Tsol_dry = Tsol_K - C2K
+
     return {'Tsol_dry': Tsol_dry}
 
 
@@ -220,7 +389,14 @@ def _depression_dasgupta(CO2: np.ndarray) -> np.ndarray:
     return dTz
 
 
-def calculate_solidus_K(P_GPa: ArrayLike, method: str = 'hirschmann') -> np.ndarray:
+def calculate_solidus_K(
+    P_GPa: ArrayLike,
+    method: str = 'hirschmann',
+    depth_km: Optional[ArrayLike] = None,
+    density_model: str = 'constant',
+    density_rho: float = 3400.0,
+    density_file: Optional[str] = None,
+) -> np.ndarray:
     """
     Convenience function to calculate solidus in Kelvin.
     
@@ -229,7 +405,16 @@ def calculate_solidus_K(P_GPa: ArrayLike, method: str = 'hirschmann') -> np.ndar
     P_GPa : array_like
         Pressure in GPa
     method : str
-        Solidus parameterization ('hirschmann' or 'katz')
+        Solidus parameterization ('hirschmann', 'katz', or 'yk2001')
+    depth_km : array_like, optional
+        Depth in km. Only used by 'yk2001'; bypasses P-to-depth conversion.
+    density_model : str
+        Density model for P-to-depth conversion ('constant', 'prem', or
+        'custom'). Only used by 'yk2001' when *depth_km* is None.
+    density_rho : float
+        Constant density in kg/m³ (when density_model='constant').
+    density_file : str, optional
+        Path to custom density CSV (when density_model='custom').
         
     Returns
     -------
@@ -237,5 +422,9 @@ def calculate_solidus_K(P_GPa: ArrayLike, method: str = 'hirschmann') -> np.ndar
         Solidus temperature in Kelvin
     """
     P_Pa = np.atleast_1d(P_GPa) * 1e9
-    result = solidus(P_Pa, H2O=0.0, CO2=0.0, method=method)
+    result = solidus(
+        P_Pa, H2O=0.0, CO2=0.0, method=method,
+        depth_km=depth_km, density_model=density_model,
+        density_rho=density_rho, density_file=density_file,
+    )
     return result['Tsol'] + C2K

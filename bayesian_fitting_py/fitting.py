@@ -550,10 +550,10 @@ def extract_ml_estimates(
     """
     Extract maximum likelihood estimates and uncertainties from posterior.
 
-    Computes the maximum a posteriori (MAP) estimate and the variance
-    (standard deviation) for each state variable from the posterior
-    probability distribution. Also extracts predicted Vs and Q at the
-    ML state variable values.
+    The ML (MAP) estimates are taken from the joint maximum of the full
+    posterior distribution — the single (T, φ, gs) combination with the
+    highest probability.  Mean and standard deviation are still computed
+    from the per-variable marginal distributions.
 
     Parameters
     ----------
@@ -583,19 +583,21 @@ def extract_ml_estimates(
     estimates = {}
     ml_indices = {}
     
+    # Joint MAP: find the single (T, phi, gs) with highest posterior
+    joint_map_idx = np.unravel_index(np.argmax(pS), pS.shape)
+    
     for i, name in enumerate(state_names):
         values = posterior[name]
         
-        # Compute marginal distribution for this variable
-        # Sum over all other dimensions
-        axes_to_sum = tuple(j for j in range(len(state_names)) if j != i)
-        marginal = np.sum(pS, axis=axes_to_sum)
-        marginal = marginal / np.sum(marginal)  # Normalize
-        
-        # Maximum likelihood (mode)
-        ml_idx = np.argmax(marginal)
+        # ML estimate from the joint MAP
+        ml_idx = joint_map_idx[i]
         ml_value = values[ml_idx]
         ml_indices[name] = ml_idx
+        
+        # Compute marginal for mean and std (still useful for uncertainty)
+        axes_to_sum = tuple(j for j in range(len(state_names)) if j != i)
+        marginal = np.sum(pS, axis=axes_to_sum)
+        marginal = marginal / np.sum(marginal)
         
         # Mean (expected value)
         mean_value = np.sum(marginal * values)
@@ -709,14 +711,16 @@ def extract_ml_from_joint(
     
     estimates = {}
     
+    # Joint MAP: single (T, phi) with highest probability
+    joint_idx = np.unravel_index(np.argmax(p_joint), p_joint.shape)
+    
     # Temperature (axis 0)
     marginal_T = np.sum(p_joint, axis=1)
     marginal_T = marginal_T / np.sum(marginal_T)
-    ml_idx_T = np.argmax(marginal_T)
     mean_T = np.sum(marginal_T * T_values)
     std_T = np.sqrt(np.sum(marginal_T * (T_values - mean_T)**2))
     estimates['T'] = {
-        'ml': float(T_values[ml_idx_T]),
+        'ml': float(T_values[joint_idx[0]]),
         'mean': float(mean_T),
         'std': float(std_T),
     }
@@ -724,11 +728,10 @@ def extract_ml_from_joint(
     # Melt fraction (axis 1)
     marginal_phi = np.sum(p_joint, axis=0)
     marginal_phi = marginal_phi / np.sum(marginal_phi)
-    ml_idx_phi = np.argmax(marginal_phi)
     mean_phi = np.sum(marginal_phi * phi_values)
     std_phi = np.sqrt(np.sum(marginal_phi * (phi_values - mean_phi)**2))
     estimates['phi'] = {
-        'ml': float(phi_values[ml_idx_phi]),
+        'ml': float(phi_values[joint_idx[1]]),
         'mean': float(mean_phi),
         'std': float(std_phi),
     }

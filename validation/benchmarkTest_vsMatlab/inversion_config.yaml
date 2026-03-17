@@ -1,0 +1,64 @@
+# ============================================================================
+# Bayesian inversion config for the MATLAB benchmark validation.
+#
+# Uses the same manual locations and settings as the original test_config.yaml
+# to produce inversion results comparable to the MATLAB VBRc output.
+#
+# Run with:
+#   python -m vbrc_V2Tpy.bayesian_fitting_py \
+#       --config vbrc_V2Tpy/validation/benchmarkTest_vsMatlab/inversion_config.yaml
+# ============================================================================
+
+location_mode: manual
+
+locations:
+- - 40.7
+  - -117.5
+- - 39
+  - -109.8
+- - 37.2
+  - -100.9
+names:
+- BasinRange
+- ColoradoPlateau
+- Interior
+z_ranges:
+- - 75
+  - 105
+- - 120
+  - 150
+- - 120
+  - 150
+location_colors:
+- - 1
+  - 0.6
+  - 0
+- - 0
+  - 0.8
+  - 0
+- - 0
+  - 0.3
+  - 0
+
+# Data files (relative to workspace root)
+vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
+q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
+lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
+sweep_file: validation_results/benchmarkTest_vsMatlab/sweep.npz
+
+# Inversion settings — all 4 methods
+anelastic_methods:
+  - eburgers_psp
+  - andrade_psp
+  - xfit_mxw
+  - xfit_premelt
+
+gs_prior_case: log_uniform
+obs_types: VsQ
+
+# Output
+output_dir: validation_results/benchmarkTest_vsMatlab/inversion_results
+save_plots: true
+force_plots: true
+save_ml_csv: true
+ml_csv_file: validation_results/benchmarkTest_vsMatlab/inversion_results/ml_estimates.csv

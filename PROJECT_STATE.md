@@ -1,9 +1,9 @@
 # vbrc_V2Tpy — Project State Document
 
-> **Last updated:** 2026-03-09
+> **Last updated:** 2026-03-16
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
 > **Latest commit:** `4c95424` — "Fix lateral-only subsampling, add parallel progress reporting"
-> **Uncommitted changes:** Yes — depth-dependent density, Cammarano 2003, plot_lut updates, depth-range guards
+> **Uncommitted changes:** Yes — depth-dependent density, Cammarano 2003, plot_lut updates, depth-range guards, validation framework, example workflow, sweep caching, force_plots, Q synthetic support, posterior plotting improvements, benchmarkTest_vsMatlab
 
 Use this document to bootstrap a new AI chat session on this project.
 Paste it as context and say "Continue working on this project" or ask a specific question.
@@ -37,6 +37,22 @@ vbrc_V2Tpy/
 │   ├── Q_models/Dalton_Ekstrom_2008.mat
 │   ├── LAB_models/HopperFischer2018.mat
 │   └── plate_VBR/sweep_log_gs.mat
+├── validation/                        # validation & testing framework
+│   ├── __init__.py
+│   ├── run_all.py            # orchestrator for all validation cases
+│   ├── validate_prem.py      # Case 1: PREM velocity inversion
+│   ├── validate_roundtrip.py # Case 2: self-contained adiabat round-trip
+│   ├── MAP_vs_Mean_explanation.md
+│   ├── syntheticTest_adiabat/  # realistic config/CLI validation pipeline
+│   │   ├── __init__.py / __main__.py
+│   │   ├── run_example.py     # 4-step orchestrator (sweep→synth→inversion→compare)
+│   │   ├── sweep_config.yaml  # sweep generation config (131 depths, PREM density)
+│   │   └── inversion_config.yaml  # inversion config (csv_model, force_plots)
+│   └── benchmarkTest_vsMatlab/  # Python vs MATLAB VBRc benchmark
+│       ├── __init__.py / __main__.py
+│       ├── run_benchmark.py   # 4-step orchestrator (sweep→compare→LUT plots→inversion)
+│       ├── sweep_config.yaml  # matches original MATLAB sweep params
+│       └── inversion_config.yaml  # manual locations, all 4 methods
 └── bayesian_fitting_py/               # main package
     ├── __init__.py / __main__.py
     ├── run_bayes.py          # CLI entry point + InversionConfig + main loop
@@ -80,6 +96,26 @@ python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml --parallel 4
 python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml -j 0
 ```
 
+### Validation Commands
+
+```bash
+cd /Users/ehightow/Research/V2T_Inversion
+
+# Self-contained round-trip validation (with method selection)
+python -m vbrc_V2Tpy.validation.validate_roundtrip \
+    --output validation_results/roundtrip_rhoprem_anharmonic \
+    --elastic anharmonic --density prem --solidus hirschmann
+
+# Synthetic adiabat test — realistic config/CLI pipeline
+python -m vbrc_V2Tpy.validation.syntheticTest_adiabat.run_example
+
+# Benchmark: Python vs MATLAB VBRc (sweep comparison + LUT plots + inversion)
+python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+
+# Run all validation cases
+python -m vbrc_V2Tpy.validation.run_all --sweep sweep.npz
+```
+
 ### Config files in the workspace
 
 | File | Description |
@@ -88,6 +124,10 @@ python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml -j 0
 | `test_eta_config.yaml` | 2 manual locations, 2 methods, for quick viscosity testing |
 | `test_parallel_config.yaml` | NetCDF model subsampled 100×, 1 method, for parallel testing |
 | `sweep_config.yaml` | Config for regenerating the parameter sweep |
+| `validation/syntheticTest_adiabat/sweep_config.yaml` | Sweep for validation: 131 depths, PREM density, hirschmann solidus |
+| `validation/syntheticTest_adiabat/inversion_config.yaml` | Inversion for validation: csv_model, xfit_premelt, force_plots |
+| `validation/benchmarkTest_vsMatlab/sweep_config.yaml` | Sweep matching original MATLAB VBRc params (T:1100–1800, 100 depths) |
+| `validation/benchmarkTest_vsMatlab/inversion_config.yaml` | Inversion: 3 manual locations, all 4 methods, VsQ |
 
 ### Sweep file
 
@@ -110,6 +150,73 @@ All four methods verified against MATLAB output to floating-point precision:
 | `xfit_premelt` | Pre-melt fit (xfit) |
 
 ## 6. Key Features Implemented
+
+### Validation Framework (uncommitted)
+- **`validation/` directory** with modular test cases and a standalone example workflow
+- **`validate_roundtrip.py`**: Self-contained round-trip validation that generates
+  a sweep internally, forward-models Vs from a known adiabat + melt + grain-size
+  profile, inverts them, and compares recovered vs true parameters
+  - CLI flags: `--elastic` (anharmonic | cammarano2003), `--density` (prem | constant),
+    `--solidus` (hirschmann | katz | yk2001), `--output`
+  - Uses augmented state grids (`np.union1d` with true profile values) for
+    best-case grid resolution — this intentionally differs from production grids
+- **`validate_prem.py`**: PREM velocity inversion validation
+- **`run_all.py`**: Orchestrator to run all validation cases sequentially
+
+### Synthetic Adiabat Test — Realistic Config/CLI Pipeline (uncommitted)
+- **`validation/syntheticTest_adiabat/`**: End-to-end validation that exercises the
+  exact same code paths a user would run (config files + CLI subprocesses)
+- Output written to `validation_results/syntheticTest_adiabat/` (outside the
+  git repo, in the workspace root)
+- 4-step orchestrator (`run_example.py`):
+  1. Generate parameter sweep from `sweep_config.yaml`
+  2. Build synthetic Vs+Q observations from a prescribed adiabat
+  3. Run Bayesian inversion via `inversion_config.yaml`
+  4. Plot recovered vs true profiles + per-depth comparison
+- **Sweep fingerprint caching**: SHA-256 hash of `sweep_config.yaml` stored
+  alongside sweep file; regeneration only when config changes
+- **Q in synthetic observations**: CSV output includes `lon,lat,depth,vs,q`
+  columns; can be used with `obs_types: VsQ` in inversion config
+- Package entry points (`__init__.py`, `__main__.py`) for `python -m` invocation
+
+### MATLAB Benchmark Validation — benchmarkTest_vsMatlab (uncommitted)
+- **`validation/benchmarkTest_vsMatlab/`**: Automated comparison of the Python
+  VBRc against the original MATLAB VBRc output (`vbr/test.mat`)
+- 4-step orchestrator (`run_benchmark.py`):
+  1. Generate parameter sweep with settings matching original MATLAB defaults
+  2. Point-by-point numerical comparison against `vbr/test.mat` (prints
+     per-method Vs/Q differences and melt-effect analysis, mirroring
+     `compare_sweeps.py`)
+  3. LUT comparison plots (T vs gs, gs vs phi, T vs phi) at multiple depths
+     including the max-diff depth, for all 4 methods
+  4. Bayesian inversion at 3 manual locations (Basin & Range, Colorado
+     Plateau, Interior) with all 4 anelastic methods
+- Full-grid summary: reports median and max |%diff| for Vs and Q, with the
+  (T, gs, z) coordinates of the worst-case point, plus a separate summary
+  excluding the deepest depth slice
+- Sweep fingerprint caching (SHA-256 hash of config YAML)
+- Output to `validation_results/benchmarkTest_vsMatlab/` (outside git repo)
+- Invocation: `python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab`
+
+### force_plots Config Option (uncommitted)
+- `force_plots: true` in inversion YAML (or `--force-plots` CLI flag) forces
+  posterior plot generation even for large-scale runs that would normally skip plots
+- Non-interactive prompt fix: when running as a subprocess (stdin not a TTY),
+  auto-confirms without blocking on `input()` — fixes `EOFError` in pipeline usage
+
+### Posterior Plotting Improvements (uncommitted)
+- Depth included in posterior plot titles and filenames (`posterior_{z}km_{obs}_{method}.png`)
+- Consistent depth labeling across both validation pathways (roundtrip and workflow)
+
+### LUT Auto-Generation During Sweep (uncommitted)
+- `plot_lut` config section in sweep YAML: `enabled`, `output_dir`, `every_n`
+- Automatically generates look-up table diagnostic plots during sweep generation
+- Controlled via `SweepParams.plot_lut`, `plot_lut_dir`, `plot_lut_every_n`
+
+### Configurable Solidus Method (uncommitted)
+- `solidus_method` field in `SweepParams` and sweep YAML config
+- Options: `hirschmann` (default), `katz`, `yk2001`
+- YK2001 solidus handling fixed for correct pressure/temperature behavior
 
 ### Cammarano et al. (2003) Finite-Strain Elastic Method (uncommitted)
 - **New file `cammarano.py`**: Full mineral physics module implementing Appendix A
@@ -217,8 +324,59 @@ pre-computing everything into read-only copies before dispatching workers.
 - `run_locations_parallel(locations, ..., n_workers)` — parallel dispatcher (parallel.py)
 - `probability_distributions(type, ...)` — likelihood/posterior math (probability.py)
 
-## 8. Known Issues / Future Work
+## 8. Known Issues / Active Investigations
 
+### RESOLVED — Posterior inconsistency between validation pathways
+Two validation approaches produce different posterior marginal shapes for the
+same physical methods (`elastic: anharmonic`, `density: prem`, `solidus: hirschmann`):
+
+1. **`validate_roundtrip.py`** (direct, self-contained) — generates its own sweep,
+   augments state grids with true profile values via `np.union1d`, computes
+   posteriors directly via `probability_distributions` + `prior_model_probs`.
+2. **`syntheticTest_adiabat/run_example.py`** (subprocess/config path) — uses
+   pre-generated sweep on a fixed grid, runs inversion through `run_bayes.py`
+   and `fit_preloaded_observations`.
+
+- **Root cause confirmed:** Grid augmentation is the **sole** source of
+  difference. A diagnostic script (`validation/diagnose_pathway_diff.py`)
+  verified that all three code paths (direct/roundtrip-style, fit_preloaded,
+  parallel worker) produce **bit-for-bit identical** posterior arrays when
+  given the same sweep grid, at every tested depth.
+- **Why the plots look different:** When `validate_roundtrip.py` inserts true
+  profile values into the T/φ/gs axes via `np.union1d`, it changes the 3D
+  posterior array dimensions and the discrete prior mass distribution. `imshow`
+  renders these non-uniformly-spaced cells as uniform pixels, distorting the
+  visual appearance. Marginal PDFs sum over different numbers of bins.
+- **MAP estimates agree** — both grids recover the same parameter values.
+  Only the posterior shape (widths, tails) changes due to prior redistribution.
+
+### RESOLVED — Parallel mode obs_types enforcement
+- `parallel.py`'s `_process_one_location` now uses the `use_vs` / `use_q`
+  flags from the config to gate likelihood computation, rather than relying
+  solely on data presence. This ensures `obs_types: Vs` in the config is
+  respected even if Q data is available in the observations.
+- The caller already guarded data population via `use_vs`/`use_q`, so the
+  behavior was correct in practice; this fix adds defense-in-depth.
+
+### KNOWN BUG — Cammarano 2003 inversion produces bad results
+When sweep is generated with `method: cammarano2003` and Bayesian inversion is run,
+temperatures are underestimated at all depths (even deeper upper mantle) and
+viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
+- **Suspected root cause:** The Cammarano pyrolite model produces lower
+  unrelaxed Vs than the pure-olivine anharmonic model at the same (T, P):
+  - Fe correction reduces olivine G₀ from 81 → 77.9 GPa
+  - VRH averaging with softer non-olivine phases (cpx G₀≈66 GPa, opx G₀≈76 GPa)
+  - Combined effect: lower Gu → lower unrelaxed Vs → matching observed Vs
+    requires cooler T → exponentially higher η
+- **Also applies at transition zone depths** (not just upper mantle)
+- The mineral assemblage volume fractions are approximate and could compound the issue
+- Unit tests (Vs values at individual T, P points) pass correctly; the problem
+  manifests only through the full Bayesian inversion loop
+- Needs investigation: compare Vs between anharmonic and cammarano2003 at same
+  conditions; validate against published Cammarano velocity profiles; possibly
+  adjust assemblage fractions or Fe content
+
+### Other Issues
 - The `xarray` import in `data_processing.py` requires the correct conda env
   (`pyGMT2`) to be active, not just the `.venv`. Running with the wrong env
   gives `ModuleNotFoundError: No module named 'xarray'`.
@@ -229,23 +387,6 @@ pre-computing everything into read-only copies before dispatching workers.
   and can be deleted or gitignored.
 - Consider adding Q observations to the tomography inversions (currently Vs only
   for the WashU model since it doesn't include Q).
-- **ACTIVE BUG — Cammarano 2003 inversion produces bad results:**
-  When sweep is generated with `method: cammarano2003` and Bayesian inversion is run,
-  temperatures are underestimated at all depths (even deeper upper mantle) and
-  viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
-  - **Suspected root cause:** The Cammarano pyrolite model produces lower
-    unrelaxed Vs than the pure-olivine anharmonic model at the same (T, P):
-    - Fe correction reduces olivine G₀ from 81 → 77.9 GPa
-    - VRH averaging with softer non-olivine phases (cpx G₀≈66 GPa, opx G₀≈76 GPa)
-    - Combined effect: lower Gu → lower unrelaxed Vs → matching observed Vs
-      requires cooler T → exponentially higher η
-  - **Also applies at transition zone depths** (not just upper mantle)
-  - The mineral assemblage volume fractions are approximate and could compound the issue
-  - Unit tests (Vs values at individual T, P points) pass correctly; the problem
-    manifests only through the full Bayesian inversion loop
-  - Needs investigation: compare Vs between anharmonic and cammarano2003 at same
-    conditions; validate against published Cammarano velocity profiles; possibly
-    adjust assemblage fractions or Fe content
 
 ## 9. Test Results
 

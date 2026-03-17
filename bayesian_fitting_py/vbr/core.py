@@ -598,7 +598,13 @@ class VBR:
         
         # Need solidus
         if sv.Tsolidus_K is None:
-            sv.Tsolidus_K = calculate_solidus_K(sv.P_GPa, method='hirschmann')
+            sv.Tsolidus_K = calculate_solidus_K(
+                sv.P_GPa,
+                method=params.get('solidus_method', 'hirschmann'),
+                density_model=params.get('density_model', 'constant'),
+                density_rho=params.get('density_rho', 3400.0),
+                density_file=params.get('density_file'),
+            )
         
         Tn = sv.T_K / sv.Tsolidus_K  # Normalized temperature
         
@@ -1103,7 +1109,13 @@ class VBR:
         
         # Need solidus
         if sv.Tsolidus_K is None:
-            sv.Tsolidus_K = calculate_solidus_K(sv.P_GPa, method='hirschmann')
+            sv.Tsolidus_K = calculate_solidus_K(
+                sv.P_GPa,
+                method=params.get('solidus_method', 'hirschmann'),
+                density_model=params.get('density_model', 'constant'),
+                density_rho=params.get('density_rho', 3400.0),
+                density_file=params.get('density_file'),
+            )
         
         # Get unrelaxed modulus - follows MATLAB Q_xfit_premelt.m logic:
         # if include_direct_melt_effect == 1 (YT2024): always use base elastic

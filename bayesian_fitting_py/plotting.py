@@ -166,6 +166,17 @@ def plot_tradeoffs_posterior(
             cmap='viridis',
         )
         
+        # Mark the MAP (highest-probability) voxel.
+        # imshow maps pixels uniformly across the extent, so we must
+        # compute the pixel-centre position rather than using the raw
+        # grid values (which may be non-uniformly spaced, e.g. logspace).
+        nrows, ncols = p_joint.shape
+        iy_max, ix_max = np.unravel_index(np.argmax(p_joint), p_joint.shape)
+        x_map = x_vals.min() + (ix_max + 0.5) / ncols * (x_vals.max() - x_vals.min())
+        y_map = y_vals.min() + (iy_max + 0.5) / nrows * (y_vals.max() - y_vals.min())
+        ax.plot(x_map, y_map, 's',
+                ms=12, mfc='none', mew=2, color='red', label='MAP')
+        
         ax.set_xlabel(fnames[x_var])
         ax.set_ylabel(fnames[y_var])
         plt.colorbar(im, ax=ax)
@@ -442,6 +453,7 @@ def save_figure_for_posterior(
     anelastic_method: str,
     save_dir: str,
     obs_type: str = 'VQ',
+    depth_km: Optional[float] = None,
 ) -> None:
     """
     Generate and save posterior plots.
@@ -460,20 +472,29 @@ def save_figure_for_posterior(
         Directory to save figures
     obs_type : str
         'V', 'Q', or 'VQ' indicating which observations were used
+    depth_km : float, optional
+        Depth in km to include in title and filename
     """
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     
     # Build observation string
     obs_parts = []
+    if depth_km is not None:
+        obs_parts.append(f"z = {depth_km:.1f} km")
     if 'obs_Vs' in posterior:
         obs_parts.append(f"Vs = {posterior['obs_Vs']:.3f} ± {posterior['sigma_Vs']:.2f} km/s")
     if 'obs_Q' in posterior:
         obs_parts.append(f"Q = {posterior['obs_Q']:.1f} ± {posterior['sigma_Q']:.1f}")
     obs_str = ', '.join(obs_parts)
     
+    if depth_km is not None:
+        fname = f'{save_dir}/posterior_{depth_km:.0f}km_{obs_type}_{anelastic_method}.png'
+    else:
+        fname = f'{save_dir}/{location_name}_{obs_type}_{anelastic_method}.png'
+    
     fig = plot_tradeoffs_posterior(
         posterior['pS'], sweep, obs_str, anelastic_method,
-        save_path=f'{save_dir}/{location_name}_{obs_type}_{anelastic_method}.png'
+        save_path=fname
     )
     plt.close(fig)
 
