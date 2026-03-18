@@ -1,10 +1,21 @@
 # ============================================================================
 # Bayesian inversion config for the MATLAB benchmark validation.
 #
-# Uses the same manual locations and settings as the original test_config.yaml
+# Uses the same manual locations and settings as the original Havlin example
 # to produce inversion results comparable to the MATLAB VBRc output.
 #
-# Run with:
+# For the benchmark case, this is run from run_benchmark.py, which calls the inversion module with this config.:
+#   python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+# To run benchmark with different grainsize priors: 
+#   set gs_prior_case to "log_uniform", "log_normal_1mm", or "log_normal_1cm"  
+# To run the benchmark with either Vs or Q only:
+#   set obs_types to "Vs", "Q", or "VsQ" (both)
+#
+# Set output directory for where you want to store benchmark results: 
+#   output_dir: validation_results/benchmarkTest_vsMatlab/inversion_results
+#   DO NOT OUTPUT TO GITHUB REPO DIRECTORY; keep your GitHub repo clone clean
+#
+# Inversion can also be run independently of run_benchmark.py with:
 #   python -m vbrc_V2Tpy.bayesian_fitting_py \
 #       --config vbrc_V2Tpy/validation/benchmarkTest_vsMatlab/inversion_config.yaml
 # ============================================================================

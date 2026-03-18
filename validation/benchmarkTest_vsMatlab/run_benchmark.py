@@ -124,8 +124,8 @@ def _compare_sweeps_numerically(python_sweep_file, matlab_sweep_file):
 
             # MATLAB values (raw loadmat struct access)
             e_mat = Box_mat[i_T, i_phi, i_gs][method][0, 0]
-            vs_mat = float(e_mat['meanVs'][0, 0].flatten()[i_z])
-            q_mat = float(e_mat['meanQ'][0, 0].flatten()[i_z])
+            vs_mat = float(e_mat['meanVs'].flatten()[i_z])
+            q_mat = float(e_mat['meanQ'].flatten()[i_z])
 
             dVs = vs_py - vs_mat
             dQ = q_py - q_mat
@@ -147,8 +147,8 @@ def _compare_sweeps_numerically(python_sweep_file, matlab_sweep_file):
         vs_py_m = float(sweep_py['Box'][method]['meanVs'][i_T, 8, i_gs, i_z])
         e_mat_0 = Box_mat[i_T, 0, i_gs][method][0, 0]
         e_mat_m = Box_mat[i_T, 8, i_gs][method][0, 0]
-        vs_mat_0 = float(e_mat_0['meanVs'][0, 0].flatten()[i_z])
-        vs_mat_m = float(e_mat_m['meanVs'][0, 0].flatten()[i_z])
+        vs_mat_0 = float(e_mat_0['meanVs'].flatten()[i_z])
+        vs_mat_m = float(e_mat_m['meanVs'].flatten()[i_z])
 
         print(f"=== Melt effect (phi=0.02 vs phi=0) for {method} ===")
         print(f"MATLAB: dVs = {(vs_mat_m - vs_mat_0)*1000:.2f} m/s "
@@ -174,8 +174,8 @@ def _compare_sweeps_numerically(python_sweep_file, matlab_sweep_file):
         for iT in range(nT):
             for igs in range(ngs):
                 e = Box_mat[iT, 0, igs][method][0, 0]
-                vs_mat_arr[iT, igs, :] = e['meanVs'][0, 0].flatten()
-                q_mat_arr[iT, igs, :] = e['meanQ'][0, 0].flatten()
+                vs_mat_arr[iT, igs, :] = e['meanVs'].flatten()
+                q_mat_arr[iT, igs, :] = e['meanQ'].flatten()
 
         pctVs = 100 * (vs_py_arr - vs_mat_arr) / vs_mat_arr
         valid_Q = q_mat_arr != 0
@@ -207,55 +207,6 @@ def _compare_sweeps_numerically(python_sweep_file, matlab_sweep_file):
               f"T = {T_py[idx_q_max[0]]:.0f} C, "
               f"gs = {gs_py[idx_q_max[1]]:.0f} um)")
 
-    # --- Same summary excluding the deepest depth slice ---
-    # Reuse the full MATLAB arrays already built above, just slice off last z
-    max_z_km = z_py[-1] / 1e3
-    print()
-    print("=" * 60)
-    print(f"Full-grid summary EXCLUDING max depth ({max_z_km:.0f} km)")
-    print("=" * 60)
-    for method in METHODS:
-        # Rebuild full arrays (reuse pattern from above)
-        vs_py_full = sweep_py['Box'][method]['meanVs'][:, 0, :, :]
-        q_py_full = sweep_py['Box'][method]['meanQ'][:, 0, :, :]
-        vs_mat_full = np.zeros((nT, ngs, nz))
-        q_mat_full = np.zeros((nT, ngs, nz))
-        for iT in range(nT):
-            for igs in range(ngs):
-                e = Box_mat[iT, 0, igs][method][0, 0]
-                vs_mat_full[iT, igs, :] = e['meanVs'][0, 0].flatten()
-                q_mat_full[iT, igs, :] = e['meanQ'][0, 0].flatten()
-
-        # Now slice off the last depth
-        vs_py_arr = vs_py_full[:, :, :-1]
-        q_py_arr = q_py_full[:, :, :-1]
-        vs_mat_arr = vs_mat_full[:, :, :-1]
-        q_mat_arr = q_mat_full[:, :, :-1]
-
-        pctVs = 100 * (vs_py_arr - vs_mat_arr) / vs_mat_arr
-        valid_Q = q_mat_arr != 0
-        pctQ = np.zeros_like(q_mat_arr)
-        pctQ[valid_Q] = 100 * (q_py_arr[valid_Q] - q_mat_arr[valid_Q]) / q_mat_arr[valid_Q]
-
-        abs_pctVs = np.abs(pctVs)
-        abs_pctQ = np.abs(pctQ)
-
-        idx_vs = np.unravel_index(np.argmax(abs_pctVs), abs_pctVs.shape)
-        idx_q = np.unravel_index(np.argmax(abs_pctQ), abs_pctQ.shape)
-
-        print(f"  {method:18s}")
-        print(f"    Vs: median|%diff| = {np.median(abs_pctVs):.6f}%,  "
-              f"max|%diff| = {np.max(abs_pctVs):.6f}% "
-              f"(at z = {z_py[idx_vs[2]]/1e3:.1f} km, "
-              f"T = {T_py[idx_vs[0]]:.0f} C, "
-              f"gs = {gs_py[idx_vs[1]]:.0f} um)")
-        med_q = np.median(abs_pctQ[valid_Q]) if np.any(valid_Q) else 0.0
-        print(f"    Q:  median|%diff| = {med_q:.6f}%,  "
-              f"max|%diff| = {np.max(abs_pctQ[valid_Q]):.6f}% "
-              f"(at z = {z_py[idx_q[2]]/1e3:.1f} km, "
-              f"T = {T_py[idx_q[0]]:.0f} C, "
-              f"gs = {gs_py[idx_q[1]]:.0f} um)")
-
     # Collect the P_GPa values where the worst Vs diff occurs per method
     P_GPa_py = sweep_py['P_GPa']
     max_diff_pressures = {}
@@ -266,7 +217,7 @@ def _compare_sweeps_numerically(python_sweep_file, matlab_sweep_file):
         for iT in range(nT):
             for igs in range(ngs):
                 e = Box_mat[iT, 0, igs][method][0, 0]
-                vs_mat_arr[iT, igs, :] = e['meanVs'][0, 0].flatten()
+                vs_mat_arr[iT, igs, :] = e['meanVs'].flatten()
         abs_pct = np.abs(100 * (vs_py_arr - vs_mat_arr) / vs_mat_arr)
         idx = np.unravel_index(np.argmax(abs_pct), abs_pct.shape)
         max_diff_pressures[method] = float(P_GPa_py[idx[2]])
@@ -291,7 +242,7 @@ def _plot_lut_comparisons(python_sweep_file, matlab_sweep_file,
     maximum Vs difference was found.
 
     Produces three comparison plot types per method per pressure:
-      - T vs gs   (compare_lut_slices)
+      - T vs gs   (compare_lut_slices_T_gs)
       - gs vs phi (compare_lut_slices_gs_phi)
       - T vs phi  (compare_lut_slices_T_phi)
     Plus standalone Python-only LUT slices.
@@ -302,10 +253,9 @@ def _plot_lut_comparisons(python_sweep_file, matlab_sweep_file,
 
     from vbrc_V2Tpy.bayesian_fitting_py.vbr.plot_lut import (
         _load_sweep_file,
-        compare_lut_slices,
+        compare_lut_slices_T_gs,
         compare_lut_slices_gs_phi,
         compare_lut_slices_T_phi,
-        plot_lut_slices,
     )
 
     sweep_py = _load_sweep_file(python_sweep_file)
@@ -347,7 +297,7 @@ def _plot_lut_comparisons(python_sweep_file, matlab_sweep_file,
             print(f"    {method} @ {P:.2f} GPa{tag}")
 
             with contextlib.redirect_stdout(io.StringIO()):
-                fig = compare_lut_slices(
+                fig = compare_lut_slices_T_gs(
                     sweep_mat, sweep_py, method=method,
                     P_GPa=P, save_path=method_dir)
                 plt.close(fig)
@@ -362,12 +312,7 @@ def _plot_lut_comparisons(python_sweep_file, matlab_sweep_file,
                     P_GPa=P, save_path=method_dir)
                 plt.close(fig)
 
-                fig = plot_lut_slices(
-                    sweep_py, method=method,
-                    P_GPa=P, save_path=method_dir)
-                plt.close(fig)
-
-            n_figs += 4
+            n_figs += 3
 
     print(f"  Saved {n_figs} LUT figures to {lut_dir}/")
 

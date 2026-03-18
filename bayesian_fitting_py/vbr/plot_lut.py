@@ -6,6 +6,7 @@ Creates figures like Fig. 7 from the paper showing Vs and Q as functions
 of temperature, grain size, and melt fraction at fixed pressure/depth.
 """
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
@@ -450,7 +451,7 @@ def plot_lut_slices(
     return fig
 
 
-def compare_lut_slices(
+def compare_lut_slices_T_gs(
     sweep_ref: Any,
     sweep_new: Any,
     method: str = 'andrade_psp',
@@ -1114,7 +1115,7 @@ if __name__ == '__main__':
     if args.compare:
         ref_sweep = _load_sweep_file(args.compare)
         # Compare new sweep against reference - all three slice types
-        compare_lut_slices(ref_sweep, sweep, method=args.method, P_GPa=args.P, save_path=args.save)
+        compare_lut_slices_T_gs(ref_sweep, sweep, method=args.method, P_GPa=args.P, save_path=args.save)
         compare_lut_slices_gs_phi(ref_sweep, sweep, method=args.method, P_GPa=args.P, save_path=args.save)
         compare_lut_slices_T_phi(ref_sweep, sweep, method=args.method, P_GPa=args.P, save_path=args.save)
     else:
