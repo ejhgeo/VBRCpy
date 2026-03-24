@@ -7,7 +7,7 @@
 # For the benchmark case, this is run from run_benchmark.py, which calls the inversion module with this config.:
 #   python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
 # To run benchmark with different grainsize priors: 
-#   set gs_prior_case to "log_uniform", "log_normal_1mm", or "log_normal_1cm"  
+#   set gs_prior_type to "log_uniform" or "log_normal" (with gs_prior_mean_mm and gs_prior_std)  
 # To run the benchmark with either Vs or Q only:
 #   set obs_types to "Vs", "Q", or "VsQ" (both)
 #
@@ -64,7 +64,7 @@ anelastic_methods:
   - xfit_mxw
   - xfit_premelt
 
-gs_prior_case: log_uniform
+gs_prior_type: log_uniform
 obs_types: VsQ
 
 # Output

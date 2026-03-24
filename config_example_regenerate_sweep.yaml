@@ -77,9 +77,13 @@ sweep_generation:
     - xfit_premelt
 
   # --------------------------------------------------------------------------
-  # Output file
+  # Output directory & file
   # --------------------------------------------------------------------------
-  output_file: sweep_fixed.mat
+  # Set output_dir to place sweep.npz and lut_plots/ in a single directory.
+  # output_file and plot_lut output_dir are derived automatically unless
+  # explicitly overridden.
+  output_dir: my_sweep_output/
+  # output_file: my_sweep_output/sweep_fixed.mat  # optional override
 
   # --------------------------------------------------------------------------
   # Elastic options 
@@ -112,3 +116,11 @@ sweep_generation:
   sig_MPa: 0.1             # differential stress [MPa]
   Ch2o: 0                  # water content [ppm]
   eburgers_method: FastBurger  # or 'PointWise' (default: FastBurger)
+
+  # --------------------------------------------------------------------------
+  # xfit_premelt: direct melt effect (Yamauchi & Takei 2024)
+  # --------------------------------------------------------------------------
+  # 0 = YT2016 mode (poroelastic effect via external anh_poro only, default)
+  # 1 = YT2024 mode (direct melt effects on anelasticity: Beta_B, Beta_P,
+  #     and poro_Lambda applied internally to J1/J2)
+  include_direct_melt_effect: 0

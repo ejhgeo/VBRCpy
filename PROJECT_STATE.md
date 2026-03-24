@@ -1,9 +1,9 @@
 # vbrc_V2Tpy — Project State Document
 
-> **Last updated:** 2026-03-16
+> **Last updated:** 2026-03-24
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
-> **Latest commit:** `4c95424` — "Fix lateral-only subsampling, add parallel progress reporting"
-> **Uncommitted changes:** Yes — depth-dependent density, Cammarano 2003, plot_lut updates, depth-range guards, validation framework, example workflow, sweep caching, force_plots, Q synthetic support, posterior plotting improvements, benchmarkTest_vsMatlab
+> **Latest commit:** `8a93465` — "Fix MATLAB struct indexing bug, rename compare_lut_slices, cleanup"
+> **Uncommitted changes:** Yes — see §6 "Recent Uncommitted Changes"
 
 Use this document to bootstrap a new AI chat session on this project.
 Paste it as context and say "Continue working on this project" or ask a specific question.
@@ -31,7 +31,6 @@ vbrc_V2Tpy/
 ├── setup.py / pyproject.toml          # pip-installable
 ├── config_example_bayesian_fitting.yaml
 ├── config_example_regenerate_sweep.yaml
-├── compare_sweeps.py
 ├── data/                              # bundled .mat data files
 │   ├── vel_models/Shen_Ritzwoller_2016.mat
 │   ├── Q_models/Dalton_Ekstrom_2008.mat
@@ -39,15 +38,13 @@ vbrc_V2Tpy/
 │   └── plate_VBR/sweep_log_gs.mat
 ├── validation/                        # validation & testing framework
 │   ├── __init__.py
-│   ├── run_all.py            # orchestrator for all validation cases
-│   ├── validate_prem.py      # Case 1: PREM velocity inversion
-│   ├── validate_roundtrip.py # Case 2: self-contained adiabat round-trip
-│   ├── MAP_vs_Mean_explanation.md
-│   ├── syntheticTest_adiabat/  # realistic config/CLI validation pipeline
+│   ├── syntheticTest_geotherm/  # geotherm-based validation (SC2006 continental geotherm)
+│   │   ├── README.md           # usage, assumptions, output description
 │   │   ├── __init__.py / __main__.py
-│   │   ├── run_example.py     # 4-step orchestrator (sweep→synth→inversion→compare)
-│   │   ├── sweep_config.yaml  # sweep generation config (131 depths, PREM density)
-│   │   └── inversion_config.yaml  # inversion config (csv_model, force_plots)
+│   │   ├── run_example.py     # 4-step orchestrator with --gs-um and --replot-lut
+│   │   ├── sweep_config.yaml  # Cammarano 2003, PREM, YK2001, xfit_premelt, 131 depths
+│   │   ├── inversion_config.yaml  # csv_model, VsQ, percent Q error, log-normal gs prior
+│   │   └── SC2006_geotherm.csv  # prescribed geotherm (120 pts, 0–3000 km)
 │   └── benchmarkTest_vsMatlab/  # Python vs MATLAB VBRc benchmark
 │       ├── __init__.py / __main__.py
 │       ├── run_benchmark.py   # 4-step orchestrator (sweep→compare→LUT plots→inversion)
@@ -101,19 +98,12 @@ python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml -j 0
 ```bash
 cd /Users/ehightow/Research/V2T_Inversion
 
-# Self-contained round-trip validation (with method selection)
-python -m vbrc_V2Tpy.validation.validate_roundtrip \
-    --output validation_results/roundtrip_rhoprem_anharmonic \
-    --elastic anharmonic --density prem --solidus hirschmann
-
-# Synthetic adiabat test — realistic config/CLI pipeline
-python -m vbrc_V2Tpy.validation.syntheticTest_adiabat.run_example
+# Synthetic geotherm test — SC2006 continental geotherm
+python -m vbrc_V2Tpy.validation.syntheticTest_geotherm
+python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --gs-um 800
 
 # Benchmark: Python vs MATLAB VBRc (sweep comparison + LUT plots + inversion)
 python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
-
-# Run all validation cases
-python -m vbrc_V2Tpy.validation.run_all --sweep sweep.npz
 ```
 
 ### Config files in the workspace
@@ -124,8 +114,8 @@ python -m vbrc_V2Tpy.validation.run_all --sweep sweep.npz
 | `test_eta_config.yaml` | 2 manual locations, 2 methods, for quick viscosity testing |
 | `test_parallel_config.yaml` | NetCDF model subsampled 100×, 1 method, for parallel testing |
 | `sweep_config.yaml` | Config for regenerating the parameter sweep |
-| `validation/syntheticTest_adiabat/sweep_config.yaml` | Sweep for validation: 131 depths, PREM density, hirschmann solidus |
-| `validation/syntheticTest_adiabat/inversion_config.yaml` | Inversion for validation: csv_model, xfit_premelt, force_plots |
+| `validation/syntheticTest_geotherm/sweep_config.yaml` | Sweep for geotherm validation: 131 depths, Cammarano 2003, PREM density, YK2001 solidus, YT2024 |
+| `validation/syntheticTest_geotherm/inversion_config.yaml` | Inversion for geotherm: csv_model, xfit_premelt, VsQ, percent Q error, log-normal gs prior |
 | `validation/benchmarkTest_vsMatlab/sweep_config.yaml` | Sweep matching original MATLAB VBRc params (T:1100–1800, 100 depths) |
 | `validation/benchmarkTest_vsMatlab/inversion_config.yaml` | Inversion: 3 manual locations, all 4 methods, VsQ |
 
@@ -151,74 +141,153 @@ All four methods verified against MATLAB output to floating-point precision:
 
 ## 6. Key Features Implemented
 
-### Validation Framework (uncommitted)
+### Recent Uncommitted Changes (2026-03-24)
+
+#### Synthetic Geotherm Validation Test (`syntheticTest_geotherm`)
+- **New validation case:** `validation/syntheticTest_geotherm/` uses the SC2006
+  continental geotherm (Stixrude & Lithgow-Bertelloni 2006) instead of a simple
+  adiabat, providing realistic thermal structure with a cold lithospheric lid,
+  thermal boundary layer, and convecting interior
+- Same 4-step orchestrator pattern as syntheticTest_adiabat
+  (sweep → synthetic obs → inversion → comparison)
+- **`--gs-um` CLI argument**: configurable true grain size in microns
+  (default 1000 = 1 mm), threaded through the synthetic observation generation
+- **2×3 comparison figure**: T, Vs, Q (row 1) and φ, gs, η (row 2) with
+  both MAP and marginal-mean curves
+- **Error statistics in all legends**: RMSE, MAE, and mean %error computed
+  for each variable; displayed directly in plot legends
+- **Q error threshold**: depths where true Q > 1500 (cold lithosphere) are
+  excluded from Q error statistics to avoid blown-up RMSE; exclusion count
+  shown in panel title
+- **Solidus on temperature panel**: red dashed line showing the configured
+  solidus (yk2001) for reference alongside the geotherm and recovered profiles
+- **Percentage-based Q error model**: `q_error_mode: percent` with
+  `default_q_error: 12%` so shallow Q → ∞ observations don't dominate the
+  likelihood
+- Color coding: φ = C3 (red), gs = C2 (green) for better visual distinction
+- `README.md` included in the test directory documenting usage and assumptions
+
+#### Viscosity Model Consistency Fix (`generate_sweep.py`)
+- **Fixed:** Sweep previously always stored HK2003 `eta_total` in `meanEta`,
+  even when xfit_premelt was the anelastic method. The forward model used
+  xfit_premelt viscosity, causing a systematic divergence growing with depth
+  (different activation energies: 462.5 vs 375 kJ/mol, different activation
+  volumes: 7.913 vs 10 ×10⁻⁶ m³/mol, and xfit_premelt's A_n near-solidus
+  scaling factor)
+- Now stores method-consistent viscosity:
+  `vbr.output['viscous']['xfit_premelt']['diff']['eta']` when
+  xfit_premelt is the selected anelastic method; HK2003 as fallback
+- **Requires sweep regeneration** (delete existing sweep.npz) to take effect
+
+#### Q Error Mode Config Option
+- New `q_error_mode` config option in inversion YAML: `'absolute'` (default,
+  backward compatible) or `'percent'`
+- When `percent`, Q error = `default_q_error / 100 * Q_obs`, so error scales
+  with the observed Q value
+- Implemented in `run_bayes.py`, `data_processing.py`, and `parallel.py`
+
+#### Generalized Grain-Size Prior
+- Replaced hardcoded `gs_prior_case` with generalized config fields:
+  `gs_prior_type` (`log_uniform` or `log_normal`), `gs_prior_mean_mm`,
+  `gs_prior_std`
+- Updated all configs, CLI parsers, and prior computation code
+
+### Previous Uncommitted Changes (2026-03-19)
+
+#### `include_direct_melt_effect` Config Option (YT2016 vs YT2024)
+- `generate_sweep.py`: New `SweepParams.include_direct_melt_effect` field (0=YT2016, 1=YT2024)
+- YT2016 (default): anelastic J1/J2 have no explicit φ dependence; only
+  poroelastic elastic correction (`anh_poro`) provides melt sensitivity
+- YT2024: adds direct melt effects on anelasticity via `Beta_B`, `Beta_P`,
+  `poro_Lambda` terms in xfit_premelt
+- Exposed via YAML (`include_direct_melt_effect: 1` in sweep config)
+- Logged during sweep generation (`xfit_premelt melt mode: YT2024`)
+
+#### `output_dir` Config for Sweep Generation
+- `SweepParams.output_dir`: when set, `output_file` and `plot_lut_dir` are
+  automatically derived as `{output_dir}/sweep.npz` and `{output_dir}/lut_plots/`
+- Eliminates needing to set three paths manually; only `output_dir` required
+- `save_sweep()` now calls `os.makedirs()` to auto-create the output directory
+
+#### Inversion Config Improvements
+- `ml_csv_file` defaults to `None` and auto-derives as `{output_dir}/ml_estimates.csv`
+- `plot_every_n` option: controls how many posterior plots are generated
+  (e.g., `plot_every_n: 13` plots every 13th location)
+- Posterior plots now generated correctly in **parallel mode** (previously
+  skipped because plot code ran before results were collected)
+- `output_dir` in `run_example.py` now read from the inversion YAML so the
+  user only sets it once
+
+#### `--replot-lut` CLI Flag for Synthetic Adiabat Test
+- `run_example.py --replot-lut` reloads the existing sweep and regenerates
+  LUT diagnostic plots without regenerating the sweep or re-running inversion
+- Uses `generate_sweep_lut_plots()` from `plot_lut.py`
+
+#### LUT Plot Improvements (`plot_lut.py`)
+- `plot_lut_at_depth()`: new `Q_log` parameter for logarithmic Q colour scale
+- `Q_clim` parameter for clamping Q colorbar range (default adaptive)
+- `generate_sweep_lut_plots()`: convenience function to batch-plot LUT slices
+  at multiple depths from a sweep, with `every_n` depth subsampling
+
+#### Comparison Figure — Q Panel and Mean-Predicted Curves
+- `_make_comparison_plots()` in `run_example.py` now adds a **Q panel** (panel 3)
+  when Q was used in the inversion, showing synthetic Q vs predicted Q
+- Both **Vs and Q panels** show dashed "Predicted (Mean)" curves computed by
+  looking up Vs/Q in the sweep at the nearest grid point to the marginal mean
+  T, φ, gs values (no changes to core `fitting.py` or `run_bayes.py` needed)
+- Figure width scales dynamically with number of panels (`4.5 * n_panels`)
+
+### Validation Framework (committed `91e6ef5`)
 - **`validation/` directory** with modular test cases and a standalone example workflow
-- **`validate_roundtrip.py`**: Self-contained round-trip validation that generates
-  a sweep internally, forward-models Vs from a known adiabat + melt + grain-size
-  profile, inverts them, and compares recovered vs true parameters
-  - CLI flags: `--elastic` (anharmonic | cammarano2003), `--density` (prem | constant),
-    `--solidus` (hirschmann | katz | yk2001), `--output`
-  - Uses augmented state grids (`np.union1d` with true profile values) for
-    best-case grid resolution — this intentionally differs from production grids
-- **`validate_prem.py`**: PREM velocity inversion validation
-- **`run_all.py`**: Orchestrator to run all validation cases sequentially
+- ~~`validate_roundtrip.py`~~, ~~`validate_prem.py`~~, ~~`run_all.py`~~,
+  ~~`MAP_vs_Mean_explanation.md`~~: **moved to workspace root** (outdated tests,
+  no longer part of the repo)
 
-### Synthetic Adiabat Test — Realistic Config/CLI Pipeline (uncommitted)
-- **`validation/syntheticTest_adiabat/`**: End-to-end validation that exercises the
-  exact same code paths a user would run (config files + CLI subprocesses)
-- Output written to `validation_results/syntheticTest_adiabat/` (outside the
-  git repo, in the workspace root)
-- 4-step orchestrator (`run_example.py`):
-  1. Generate parameter sweep from `sweep_config.yaml`
-  2. Build synthetic Vs+Q observations from a prescribed adiabat
-  3. Run Bayesian inversion via `inversion_config.yaml`
-  4. Plot recovered vs true profiles + per-depth comparison
-- **Sweep fingerprint caching**: SHA-256 hash of `sweep_config.yaml` stored
-  alongside sweep file; regeneration only when config changes
-- **Q in synthetic observations**: CSV output includes `lon,lat,depth,vs,q`
-  columns; can be used with `obs_types: VsQ` in inversion config
-- Package entry points (`__init__.py`, `__main__.py`) for `python -m` invocation
+### ~~Synthetic Adiabat Test~~ (moved to workspace root)
+- Previously `validation/syntheticTest_adiabat/`; **moved to workspace root**
+  (`/Users/ehightow/Research/V2T_Inversion/syntheticTest_adiabat/`) — not
+  included in the repo. Superseded by the geotherm test.
 
-### MATLAB Benchmark Validation — benchmarkTest_vsMatlab (uncommitted)
+### MATLAB Benchmark Validation — benchmarkTest_vsMatlab (committed `91e6ef5`, fixed `8a93465`)
 - **`validation/benchmarkTest_vsMatlab/`**: Automated comparison of the Python
   VBRc against the original MATLAB VBRc output (`vbr/test.mat`)
+- **All 4 methods match MATLAB to machine precision (0.000000% diff)** across
+  the full parameter grid (T × gs × z) for both Vs and Q
 - 4-step orchestrator (`run_benchmark.py`):
   1. Generate parameter sweep with settings matching original MATLAB defaults
   2. Point-by-point numerical comparison against `vbr/test.mat` (prints
-     per-method Vs/Q differences and melt-effect analysis, mirroring
-     `compare_sweeps.py`)
-  3. LUT comparison plots (T vs gs, gs vs phi, T vs phi) at multiple depths
-     including the max-diff depth, for all 4 methods
+     per-method Vs/Q differences and melt-effect analysis)
+  3. LUT comparison plots (`compare_lut_slices_T_gs`, `compare_lut_slices_gs_phi`,
+     `compare_lut_slices_T_phi`) at multiple depths for all 4 methods
   4. Bayesian inversion at 3 manual locations (Basin & Range, Colorado
      Plateau, Interior) with all 4 anelastic methods
-- Full-grid summary: reports median and max |%diff| for Vs and Q, with the
-  (T, gs, z) coordinates of the worst-case point, plus a separate summary
-  excluding the deepest depth slice
+- Full-grid summary: reports median and max |%diff| for Vs and Q with
+  (T, gs, z) coordinates of the worst-case point
 - Sweep fingerprint caching (SHA-256 hash of config YAML)
 - Output to `validation_results/benchmarkTest_vsMatlab/` (outside git repo)
 - Invocation: `python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab`
 
-### force_plots Config Option (uncommitted)
+### force_plots Config Option (committed `91e6ef5`)
 - `force_plots: true` in inversion YAML (or `--force-plots` CLI flag) forces
   posterior plot generation even for large-scale runs that would normally skip plots
 - Non-interactive prompt fix: when running as a subprocess (stdin not a TTY),
   auto-confirms without blocking on `input()` — fixes `EOFError` in pipeline usage
 
-### Posterior Plotting Improvements (uncommitted)
+### Posterior Plotting Improvements (committed `91e6ef5`)
 - Depth included in posterior plot titles and filenames (`posterior_{z}km_{obs}_{method}.png`)
 - Consistent depth labeling across both validation pathways (roundtrip and workflow)
 
-### LUT Auto-Generation During Sweep (uncommitted)
+### LUT Auto-Generation During Sweep (committed `91e6ef5`)
 - `plot_lut` config section in sweep YAML: `enabled`, `output_dir`, `every_n`
 - Automatically generates look-up table diagnostic plots during sweep generation
 - Controlled via `SweepParams.plot_lut`, `plot_lut_dir`, `plot_lut_every_n`
 
-### Configurable Solidus Method (uncommitted)
+### Configurable Solidus Method (committed `91e6ef5`)
 - `solidus_method` field in `SweepParams` and sweep YAML config
 - Options: `hirschmann` (default), `katz`, `yk2001`
 - YK2001 solidus handling fixed for correct pressure/temperature behavior
 
-### Cammarano et al. (2003) Finite-Strain Elastic Method (uncommitted)
+### Cammarano et al. (2003) Finite-Strain Elastic Method (committed `9008504`)
 - **New file `cammarano.py`**: Full mineral physics module implementing Appendix A
   of Cammarano et al. (2003) PEPI
 - Mineral database from Table A.1: olivine, wadsleyite, ringwoodite, cpx, opx,
@@ -243,7 +312,7 @@ All four methods verified against MATLAB output to floating-point precision:
   parsing (`elastic.method`), CLI (`--elastic-method cammarano2003`)
 - Config: `elastic.method: cammarano2003` in YAML triggers this path
 
-### Depth-Dependent Density (uncommitted)
+### Depth-Dependent Density (committed `9008504`)
 - `generate_sweep.py`: Added `load_density_profile()` function with PREM default
   and custom CSV option
 - Uses cumulative trapezoid integration for lithostatic pressure instead of
@@ -256,12 +325,12 @@ All four methods verified against MATLAB output to floating-point precision:
   for `*.csv` inclusion
 - YAML config: `density_model: prem`, CLI: `--density-model prem`
 
-### Depth Range Guard (uncommitted)
+### Depth Range Guard (committed `9008504`)
 - `data_processing.py` and `fitting.py`: `extract_calculated_values_in_depth_range`
   now raises `ValueError` with clear message when observation depths don't overlap
   sweep depths (previously returned NaN silently)
 
-### plot_lut.py Multi-Format Support (uncommitted)
+### plot_lut.py Multi-Format Support (committed `91e6ef5`)
 - `_load_sweep_file()` helper auto-detects `.mat`, `.npz`, `.pkl` formats
 - CLI accepts any of these formats as input
 
@@ -327,28 +396,10 @@ pre-computing everything into read-only copies before dispatching workers.
 ## 8. Known Issues / Active Investigations
 
 ### RESOLVED — Posterior inconsistency between validation pathways
-Two validation approaches produce different posterior marginal shapes for the
-same physical methods (`elastic: anharmonic`, `density: prem`, `solidus: hirschmann`):
-
-1. **`validate_roundtrip.py`** (direct, self-contained) — generates its own sweep,
-   augments state grids with true profile values via `np.union1d`, computes
-   posteriors directly via `probability_distributions` + `prior_model_probs`.
-2. **`syntheticTest_adiabat/run_example.py`** (subprocess/config path) — uses
-   pre-generated sweep on a fixed grid, runs inversion through `run_bayes.py`
-   and `fit_preloaded_observations`.
-
-- **Root cause confirmed:** Grid augmentation is the **sole** source of
-  difference. A diagnostic script (`validation/diagnose_pathway_diff.py`)
-  verified that all three code paths (direct/roundtrip-style, fit_preloaded,
-  parallel worker) produce **bit-for-bit identical** posterior arrays when
-  given the same sweep grid, at every tested depth.
-- **Why the plots look different:** When `validate_roundtrip.py` inserts true
-  profile values into the T/φ/gs axes via `np.union1d`, it changes the 3D
-  posterior array dimensions and the discrete prior mass distribution. `imshow`
-  renders these non-uniformly-spaced cells as uniform pixels, distorting the
-  visual appearance. Marginal PDFs sum over different numbers of bins.
-- **MAP estimates agree** — both grids recover the same parameter values.
-  Only the posterior shape (widths, tails) changes due to prior redistribution.
+Two validation approaches previously produced different posterior marginal shapes.
+`validate_roundtrip.py` and `syntheticTest_adiabat/` have been **moved to the
+workspace root** (no longer in the repo). Root cause was grid augmentation
+(`np.union1d`) changing prior mass distribution — MAP estimates were identical.
 
 ### RESOLVED — Parallel mode obs_types enforcement
 - `parallel.py`'s `_process_one_location` now uses the `use_vs` / `use_q`
@@ -377,6 +428,15 @@ viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
   adjust assemblage fractions or Fe content
 
 ### Other Issues
+- **Synthetic adiabat test produces noisier results than roundtrip test** — this
+  is expected and by design. The roundtrip test commits an "inverse crime":
+  synthetic observations are created by nearest-neighbor grid lookup in the same
+  sweep that the inversion uses, so recovery is near-perfect. The synthetic
+  adiabat test computes observations independently via the full VBR core at
+  exact (non-grid-snapped) T/φ/gs values, creating realistic model mismatch
+  due to grid discretization, non-linear interpolation error, and frequency
+  averaging differences. The adiabat test reveals the true resolution limits
+  of the grid-based Bayesian approach.
 - The `xarray` import in `data_processing.py` requires the correct conda env
   (`pyGMT2`) to be active, not just the `.venv`. Running with the wrong env
   gives `ModuleNotFoundError: No module named 'xarray'`.

@@ -84,8 +84,13 @@ anelastic_methods:
 - xfit_premelt
 - andrade_psp
 
-# Grain size prior: log_uniform, log_normal_1mm, log_normal_1cm
-gs_prior_case: log_normal_1cm
+# Grain size prior:
+#   gs_prior_type: 'log_uniform' or 'log_normal'
+#   gs_prior_mean_mm: mean grain size in mm (only for log_normal)
+#   gs_prior_std: std dev in log-space (only for log_normal, default 0.25)
+gs_prior_type: log_normal
+gs_prior_mean_mm: 10.0
+gs_prior_std: 0.25
 
 # Observations to use: Vs, Q, or VsQ (both)
 obs_types: VsQ
@@ -96,6 +101,8 @@ obs_types: VsQ
 output_dir: plots_debug_new/
 # output_dir: plots_reference_from_testmat_sweep/
 save_plots: true
+# force_plots: true      # force posterior plots even for large-scale runs
+# plot_every_n: 5        # with force_plots, plot every N-th location (1 = all)
 
 # For large-scale runs (tomography mode), save ML estimates to CSV
 save_ml_csv: true

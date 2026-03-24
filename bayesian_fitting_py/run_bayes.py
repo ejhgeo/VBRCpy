@@ -80,6 +80,8 @@ class InversionConfig:
     # Default errors for seismic observations (used when not provided in data files)
     default_vs_error: float = 0.05  # km/s
     default_q_error: float = 10.0  # dimensionless
+    # Q error mode: 'absolute' (default) or 'percent' (error as % of Q value)
+    q_error_mode: str = 'absolute'
     
     # For model modes: depth range filter (optional)
     # For 'csv_model', 'mat_model', 'netcdf_model': filters which depths to include
@@ -118,8 +120,13 @@ class InversionConfig:
         ]
     )
     
-    # Grain size prior type: 'log_uniform', 'log_normal_1mm', 'log_normal_1cm'
-    gs_prior_case: str = 'log_uniform'
+    # Grain size prior configuration
+    # gs_prior_type: 'log_uniform' (flat in log-space) or 'log_normal'
+    gs_prior_type: str = 'log_uniform'
+    # For log_normal: mean grain size in mm (e.g. 0.1, 1.0, 4.0, 10.0)
+    gs_prior_mean_mm: Optional[float] = None
+    # For log_normal: std dev in log-space (dimensionless, default 0.25)
+    gs_prior_std: Optional[float] = None
     
     # Observation types to use: 'Vs', 'Q', or 'VsQ' (both)
     obs_types: str = 'VsQ'
@@ -128,10 +135,14 @@ class InversionConfig:
     output_dir: str = 'plots/output_plots'
     save_plots: bool = True
     force_plots: bool = False  # Force posterior plots even for large-scale runs
+    plot_every_n: int = 1  # Plot every N-th location (1 = all, useful with force_plots)
     
     # For large-scale runs, option to save ML estimates to CSV
     save_ml_csv: bool = False
-    ml_csv_file: str = 'ml_estimates.csv'
+    # Path for ML estimates CSV.  When None (default), derived as
+    # {output_dir}/ml_estimates.csv so that the user only needs to
+    # set output_dir once.
+    ml_csv_file: Optional[str] = None
     
     # Parallelization: number of worker processes for large-scale runs.
     # 0 = auto (use all available CPU cores), 1 = sequential (no parallelization),
@@ -160,6 +171,21 @@ class InversionConfig:
             data['model_z_range'] = tuple(data['model_z_range'])
         if 'location_colors' in data:
             data['location_colors'] = [tuple(c) for c in data['location_colors']]
+        # Backward compatibility: translate old gs_prior_case to new fields
+        if 'gs_prior_case' in data and 'gs_prior_type' not in data:
+            old = data.pop('gs_prior_case')
+            if old == 'log_normal_1mm':
+                data['gs_prior_type'] = 'log_normal'
+                data.setdefault('gs_prior_mean_mm', 1.0)
+                data.setdefault('gs_prior_std', 0.25)
+            elif old == 'log_normal_1cm':
+                data['gs_prior_type'] = 'log_normal'
+                data.setdefault('gs_prior_mean_mm', 10.0)
+                data.setdefault('gs_prior_std', 0.25)
+            else:
+                data['gs_prior_type'] = 'log_uniform'
+        elif 'gs_prior_case' in data:
+            data.pop('gs_prior_case')  # new fields take precedence
         return cls(**data)
     
     @classmethod
@@ -261,45 +287,54 @@ def parse_anelastic_methods(methods_input: Union[str, List[str]]) -> List[str]:
     return methods
 
 
-def get_grain_size_prior(gs_prior_case: str) -> Tuple[GrainSizePrior, str]:
+def get_grain_size_prior(config: 'InversionConfig') -> Tuple[GrainSizePrior, str]:
     """
-    Get grain size prior configuration based on case name.
+    Build grain size prior from config fields.
 
     Parameters
     ----------
-    gs_prior_case : str
-        One of 'log_uniform', 'log_normal_1mm', 'log_normal_1cm'
+    config : InversionConfig
+        Inversion configuration with gs_prior_type, gs_prior_mean_mm,
+        and gs_prior_std fields.
 
     Returns
     -------
     tuple
         (GrainSizePrior, fig_prefix_dir)
     """
-    if gs_prior_case == 'log_uniform':
+    gs_type = config.gs_prior_type
+
+    if gs_type == 'log_uniform':
         prior = GrainSizePrior(gs_pdf_type='uniform_log')
         fig_prefix = 'gsLogUniform'
-    
-    elif gs_prior_case == 'log_normal_1mm':
+
+    elif gs_type == 'log_normal':
+        mean_mm = config.gs_prior_mean_mm
+        std = config.gs_prior_std
+        if mean_mm is None:
+            raise ValueError(
+                "gs_prior_type is 'log_normal' but gs_prior_mean_mm is not set. "
+                "Specify the mean grain size in mm (e.g. gs_prior_mean_mm: 1.0)."
+            )
+        if std is None:
+            std = 0.25  # sensible default
         prior = GrainSizePrior(
             gs_pdf_type='lognormal',
-            gs_mean=0.001 * 1e6,  # 1 mm in micrometers
-            gs_std=0.25,  # dimensionless in log-space
+            gs_mean=mean_mm * 1e3,  # mm → micrometers
+            gs_std=std,
         )
-        fig_prefix = 'gsLogNormal_1mm'
-    
-    elif gs_prior_case == 'log_normal_1cm':
-        prior = GrainSizePrior(
-            gs_pdf_type='lognormal',
-            gs_mean=0.01 * 1e6,  # 1 cm in micrometers
-            gs_std=0.25,  # dimensionless in log-space
-        )
-        fig_prefix = 'gsLogNormal_1cm'
-    
+        # Build a readable directory name like gsLogNormal_1mm or gsLogNormal_0.5mm
+        if mean_mm == int(mean_mm):
+            label = f'{int(mean_mm)}mm'
+        else:
+            label = f'{mean_mm}mm'
+        fig_prefix = f'gsLogNormal_{label}'
+
     else:
-        print(f"Warning: unexpected gs_prior_case '{gs_prior_case}', using log_uniform")
+        print(f"Warning: unexpected gs_prior_type '{gs_type}', using log_uniform")
         prior = GrainSizePrior(gs_pdf_type='uniform_log')
         fig_prefix = 'gsLogUniform'
-    
+
     return prior, fig_prefix
 
 
@@ -356,6 +391,7 @@ def prepare_locations(config: InversionConfig) -> Tuple[
             subsample=config.model_subsample,
             default_vs_error=config.default_vs_error,
             default_q_error=config.default_q_error,
+            q_error_mode=config.q_error_mode,
         )
         locations = seismic_model_data.locations
         names = seismic_model_data.names
@@ -373,6 +409,7 @@ def prepare_locations(config: InversionConfig) -> Tuple[
             subsample=config.model_subsample,
             default_vs_error=config.default_vs_error,
             default_q_error=config.default_q_error,
+            q_error_mode=config.q_error_mode,
         )
         locations = seismic_model_data.locations
         names = seismic_model_data.names
@@ -390,6 +427,7 @@ def prepare_locations(config: InversionConfig) -> Tuple[
             subsample=config.model_subsample,
             default_vs_error=config.default_vs_error,
             default_q_error=config.default_q_error,
+            q_error_mode=config.q_error_mode,
         )
         locations = seismic_model_data.locations
         names = seismic_model_data.names
@@ -462,10 +500,13 @@ def run_bayesian_inversion(
     large_scale_run = n_locations > 20
     if large_scale_run:
         n_methods = len(config.anelastic_methods)
-        n_plots = n_locations * n_methods
+        n_plotted_locs = len(range(0, n_locations, max(1, config.plot_every_n)))
+        n_plots = n_plotted_locs * n_methods
         if config.force_plots and config.save_plots:
+            every_n_msg = (f" (every {config.plot_every_n}th)"
+                           if config.plot_every_n > 1 else "")
             print(f"\nWarning: this will generate {n_plots} posterior plots "
-                  f"({n_locations} locations × {n_methods} method(s)).")
+                  f"({n_plotted_locs}{every_n_msg} locations × {n_methods} method(s)).")
             if sys.stdin.isatty():
                 print("Are you sure you want to force plotting output? [y/N] ", end='')
                 sys.stdout.flush()
@@ -488,7 +529,7 @@ def run_bayesian_inversion(
         save_individual_plots = config.save_plots
     
     # Setup grain size prior
-    grain_size_prior, fig_prefix_dir = get_grain_size_prior(config.gs_prior_case)
+    grain_size_prior, fig_prefix_dir = get_grain_size_prior(config)
     
     # Setup file paths based on obs_types
     filenames = {}
@@ -583,6 +624,26 @@ def run_bayesian_inversion(
                         'T_post': res['posterior_T'],
                     }
 
+            # Generate posterior plots for parallel results (if requested)
+            if save_individual_plots:
+                obs_label = config.obs_types.replace('VsQ', 'VQ').replace('both', 'VQ')
+                n_plotted = 0
+                for res in par_results:
+                    if res is None:
+                        continue
+                    if res['il'] % config.plot_every_n != 0:
+                        continue
+                    depth_km = None
+                    if use_preloaded and seismic_model_data.depths is not None:
+                        depth_km = float(seismic_model_data.depths[res['il']])
+                    save_figure_for_posterior(
+                        res['posterior'], sweep, res['locname'],
+                        anelastic_method, output_dir, obs_label,
+                        depth_km=depth_km,
+                    )
+                    n_plotted += 1
+                print(f"     Saved {n_plotted} posterior plots to {output_dir}/")
+
             continue  # next anelastic_method — skip the sequential loop below
         
         # ----- Sequential path (original behavior) -----
@@ -621,6 +682,9 @@ def run_bayesian_inversion(
                     if use_q and seismic_model_data.Q is not None:
                         obs_q = float(seismic_model_data.Q[il])
                         sigma_q = float(seismic_model_data.Q_error[il]) if seismic_model_data.Q_error is not None else config.default_q_error
+                        # Apply percent mode if Q_error wasn't already converted during loading
+                        if seismic_model_data.Q_error is None and config.q_error_mode == 'percent':
+                            sigma_q = obs_q * config.default_q_error / 100.0
                     
                     if first_run:
                         posterior, sweep = fit_preloaded_observations(
@@ -656,8 +720,8 @@ def run_bayesian_inversion(
             # Determine obs_type label for filenames
             obs_label = config.obs_types.replace('VsQ', 'VQ').replace('both', 'VQ')
             
-            # Save plots (only for small runs)
-            if save_individual_plots:
+            # Save plots (only for small runs, respecting plot_every_n)
+            if save_individual_plots and il % config.plot_every_n == 0:
                 print("        saving plots...")
                 # Get depth for title/filename
                 depth_km = None
@@ -825,9 +889,13 @@ def run_bayesian_inversion(
     # Save ML estimates to CSV if requested (save to current working directory)
     if config.save_ml_csv and ml_records:
         import csv
-        csv_filename = config.ml_csv_file or f'{fig_prefix_dir}_ml_estimates.csv'
-        # Save to current working directory, not output_dir
-        csv_path = csv_filename
+        # If user set ml_csv_file explicitly, use that; otherwise put it
+        # inside output_dir so the user only needs to specify output_dir.
+        if config.ml_csv_file:
+            csv_path = config.ml_csv_file
+        else:
+            csv_path = os.path.join(config.output_dir, 'ml_estimates.csv')
+        os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
         
         # Get all field names from the records
         fieldnames = list(ml_records[0].keys())
@@ -1072,8 +1140,16 @@ Examples:
     )
     parser.add_argument(
         '--gs-prior', type=str, default=None,
-        choices=['log_uniform', 'log_normal_1mm', 'log_normal_1cm'],
-        help='Grain size prior type'
+        choices=['log_uniform', 'log_normal'],
+        help='Grain size prior type: log_uniform or log_normal'
+    )
+    parser.add_argument(
+        '--gs-prior-mean-mm', type=float, default=None,
+        help='Mean grain size in mm for log_normal prior (e.g. 1.0, 0.1, 4.0)'
+    )
+    parser.add_argument(
+        '--gs-prior-std', type=float, default=None,
+        help='Std dev in log-space for log_normal prior (default: 0.25)'
     )
     parser.add_argument(
         '--output-dir', type=str, default=None,
@@ -1192,7 +1268,11 @@ Examples:
     
     # Override with command-line arguments
     if args.gs_prior is not None:
-        config.gs_prior_case = args.gs_prior
+        config.gs_prior_type = args.gs_prior
+    if args.gs_prior_mean_mm is not None:
+        config.gs_prior_mean_mm = args.gs_prior_mean_mm
+    if args.gs_prior_std is not None:
+        config.gs_prior_std = args.gs_prior_std
     if args.output_dir is not None:
         config.output_dir = args.output_dir
     if args.no_plots:

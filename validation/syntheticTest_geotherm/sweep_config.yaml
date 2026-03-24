@@ -1,15 +1,15 @@
 # ============================================================================
-# Sweep generation config for the round-trip validation example.
+# Sweep generation config for the geotherm round-trip validation.
 #
 # Run with:
 #   python -m vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep \
-#       --config vbrc_V2Tpy/validation/syntheticTest_adiabat/sweep_config.yaml
+#       --config vbrc_V2Tpy/validation/syntheticTest_geotherm/sweep_config.yaml
 # ============================================================================
 
 sweep_generation:
   temperature:
-    min: 800
-    max: 2500
+    min: 100
+    max: 2200
     step: 20
 
   melt_fraction:
@@ -20,7 +20,7 @@ sweep_generation:
 
   grain_size:
     min: 100       # 0.1 mm
-    max: 30000     # 30 mm
+    max: 10000     # 10 mm
     n_points: 25
     type: log
 
@@ -36,16 +36,22 @@ sweep_generation:
   anelastic_methods:
     - xfit_premelt
 
-  output_file: validation_results/syntheticTest_adiabat/sweep.npz
+  # Output directory — sweep.npz and lut_plots/ are placed here automatically
+  output_dir: validation_tests/syntheticTest_geotherm_cammarano2003_xfitpremelt/
 
   elastic:
-    method: anharmonic
+    method: cammarano2003
+    # method: anharmonic
+    # temperature_scaling: isaak
+    # pressure_scaling: cammarano
+    # reference_scaling: default
 
   density_model: prem
 
-  solidus_method: hirschmann
+  solidus_method: yk2001
 
   plot_lut:
     enabled: true
-    output_dir: validation_results/syntheticTest_adiabat/lut_plots
-    every_n: 13   # plot every ~13th depth (≈10 plots)
+    every_n: 5
+
+  include_direct_melt_effect: 1

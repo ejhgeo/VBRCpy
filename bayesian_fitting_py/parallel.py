@@ -258,6 +258,7 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
             'p_joint': p_joint,
             'posterior_phi': posterior['phi'],
             'posterior_T': posterior['T'],
+            'posterior': posterior,  # full dict for optional plot generation
         }
 
     except Exception as e:
@@ -358,6 +359,9 @@ def run_locations_parallel(
                     if seismic_model_data.Q_error is not None
                     else config.default_q_error
                 )
+                # Apply percent mode if Q_error wasn't already converted during loading
+                if seismic_model_data.Q_error is None and config.q_error_mode == 'percent':
+                    sigma_q = obs_q * config.default_q_error / 100.0
             if has_depth_col:
                 depth_val = seismic_model_data.depths[il]
 

@@ -13,3 +13,6 @@ data/**/*.mat
 
 # Temporary files
 data/tmp/
+
+# Agent/AI session files
+agent_history_*.json

@@ -841,6 +841,7 @@ def load_seismic_model_from_csv(
     default_q_error: float = 10.0,
     z_range: Optional[Tuple[float, float]] = None,
     subsample: int = 1,
+    q_error_mode: str = 'absolute',
 ) -> SeismicModelData:
     """
     Load seismic model data from a delimited text file (CSV, TSV, or space-separated).
@@ -859,11 +860,15 @@ def load_seismic_model_from_csv(
     default_vs_error : float
         Default Vs error if not provided in file [km/s]
     default_q_error : float
-        Default Q error if not provided in file
+        Default Q error if not provided in file.
+        If q_error_mode='percent', this is the percentage (e.g. 5.0 = 5%).
     z_range : tuple, optional
         (z_min, z_max) to filter depths. If None, use all depths.
     subsample : int
         Use every Nth point (1 = all points)
+    q_error_mode : str
+        'absolute' (default): default_q_error is absolute Q uncertainty.
+        'percent': default_q_error is percentage of observed Q value.
         
     Returns
     -------
@@ -990,8 +995,14 @@ def load_seismic_model_from_csv(
             vs_err_list.append(float(row['vs_error']) if has_vs_err else default_vs_error)
         
         if has_q:
-            q_list.append(float(row['q']))
-            q_err_list.append(float(row['q_error']) if has_q_err else default_q_error)
+            q_val = float(row['q'])
+            q_list.append(q_val)
+            if has_q_err:
+                q_err_list.append(float(row['q_error']))
+            elif q_error_mode == 'percent':
+                q_err_list.append(q_val * default_q_error / 100.0)
+            else:
+                q_err_list.append(default_q_error)
     
     print(f"Loaded {len(locations)} points from {filepath}")
     print(f"  Depth range: {min(depths):.1f} to {max(depths):.1f} km")
@@ -999,6 +1010,11 @@ def load_seismic_model_from_csv(
         print(f"  Vs range: {min(vs_list):.3f} to {max(vs_list):.3f} km/s")
     if has_q:
         print(f"  Q range: {min(q_list):.1f} to {max(q_list):.1f}")
+        if not has_q_err:
+            if q_error_mode == 'percent':
+                print(f"  Q error: {default_q_error}% of Q (range: {min(q_err_list):.1f} to {max(q_err_list):.1f})")
+            else:
+                print(f"  Q error: {default_q_error} (absolute)")
     
     return SeismicModelData(
         locations=locations,
@@ -1018,6 +1034,7 @@ def load_seismic_model_from_mat(
     default_q_error: float = 10.0,
     z_range: Optional[Tuple[float, float]] = None,
     subsample: int = 1,
+    q_error_mode: str = 'absolute',
 ) -> SeismicModelData:
     """
     Load seismic model data from a .mat file with depth information.
@@ -1035,11 +1052,15 @@ def load_seismic_model_from_mat(
     default_vs_error : float
         Default Vs error if not provided [km/s]
     default_q_error : float
-        Default Q error if not provided
+        Default Q error if not provided.
+        If q_error_mode='percent', this is the percentage (e.g. 5.0 = 5%).
     z_range : tuple, optional
         (z_min, z_max) to filter depths. If None, use all depths.
     subsample : int
         Use every Nth point (1 = all points)
+    q_error_mode : str
+        'absolute' (default): default_q_error is absolute Q uncertainty.
+        'percent': default_q_error is percentage of observed Q value.
         
     Returns
     -------
@@ -1200,7 +1221,11 @@ def load_seismic_model_from_mat(
             Vs=np.array(vs_list) if vs_list else None,
             Vs_error=np.full(len(vs_list), default_vs_error) if vs_list else None,
             Q=np.array(q_list) if q_list else None,
-            Q_error=np.full(len(q_list), default_q_error) if q_list else None,
+            Q_error=(
+                np.array(q_list) * default_q_error / 100.0
+                if q_list and q_error_mode == 'percent'
+                else np.full(len(q_list), default_q_error) if q_list else None
+            ),
         )
     
     else:
@@ -1288,7 +1313,10 @@ def load_seismic_model_from_mat(
         if vs_data is not None and vs_err is None:
             vs_err = np.full(len(vs_data), default_vs_error)
         if q_data is not None and q_err is None:
-            q_err = np.full(len(q_data), default_q_error)
+            if q_error_mode == 'percent':
+                q_err = q_data * default_q_error / 100.0
+            else:
+                q_err = np.full(len(q_data), default_q_error)
         
         print(f"Loaded {len(locations)} points from {filepath}")
         print(f"  Depth range: {min(depth_list):.1f} to {max(depth_list):.1f} km")
@@ -1325,6 +1353,7 @@ def load_seismic_model_from_netcdf(
     subsample: int = 1,
     vs_var: Optional[str] = None,
     q_var: Optional[str] = None,
+    q_error_mode: str = 'absolute',
 ) -> SeismicModelData:
     """
     Load seismic model data from a NetCDF file using xarray.
@@ -1339,7 +1368,8 @@ def load_seismic_model_from_netcdf(
     default_vs_error : float
         Default Vs error if not provided [km/s]
     default_q_error : float
-        Default Q error if not provided
+        Default Q error if not provided.
+        If q_error_mode='percent', this is the percentage (e.g. 5.0 = 5%).
     z_range : tuple, optional
         (z_min, z_max) to filter depths. If None, use all depths.
     subsample : int
@@ -1348,6 +1378,9 @@ def load_seismic_model_from_netcdf(
         Name of Vs variable. If None, will try to auto-detect.
     q_var : str, optional
         Name of Q variable. If None, will try to auto-detect.
+    q_error_mode : str
+        'absolute' (default): default_q_error is absolute Q uncertainty.
+        'percent': default_q_error is percentage of observed Q value.
         
     Returns
     -------
@@ -1466,7 +1499,11 @@ def load_seismic_model_from_netcdf(
         Vs=np.array(vs_list) if vs_list else None,
         Vs_error=np.full(len(vs_list), default_vs_error) if vs_list else None,
         Q=np.array(q_list) if q_list else None,
-        Q_error=np.full(len(q_list), default_q_error) if q_list else None,
+        Q_error=(
+            np.array(q_list) * default_q_error / 100.0
+            if q_list and q_error_mode == 'percent'
+            else np.full(len(q_list), default_q_error) if q_list else None
+        ),
     )
 
 

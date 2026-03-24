@@ -6,7 +6,8 @@ and **viscosity** from seismic Vs and Q observations using Bayesian inference.
 
 All four anelastic methods (`andrade_psp`, `eburgers_psp`, `xfit_mxw`,
 `xfit_premelt`) have been verified against the original MATLAB VBR calculator
-to floating-point precision across a full parameter sweep.
+to machine precision (0.000000% difference) across a full parameter sweep
+of temperature, grain size, melt fraction, and depth.
 
 Designed to scale from single locations to global tomography models with
 built-in **multiprocessing support** for large-scale runs.
@@ -65,6 +66,10 @@ python -m bayesian_fitting_py --list-methods
 - **Bayesian inversion** of Vs and/or Q at arbitrary locations and depth ranges
 - **Viscosity estimation**: full posterior for log₁₀(η) using HK2003 composite rheology
 - **Four anelastic methods**: andrade_psp, eburgers_psp, xfit_premelt, xfit_mxw
+- **YT2016 / YT2024 melt mode**: configurable direct melt effects on anelasticity
+  via `include_direct_melt_effect` in sweep config
+- **Two elastic backends**: `anharmonic` (linear Taylor, olivine) and
+  `cammarano2003` (finite-strain mineral physics with depth-dependent mineralogy)
 - **Parallel processing**: multiprocessing support for large-scale tomography runs
 - **Multiple input modes**: manual locations, CSV, MAT, NetCDF seismic models
 - **Pure-Python VBR calculator** — generate parameter sweeps without MATLAB
@@ -79,8 +84,7 @@ vbrc_V2Tpy/
 ├── data/                           # Fetched data files (git-ignored)
 ├── config_example_*.yaml           # Example configuration files
 ├── validation/                     # Validation & testing framework
-│   ├── validate_roundtrip.py       # Self-contained adiabat round-trip test
-│   ├── syntheticTest_adiabat/      # Realistic config/CLI pipeline test
+│   ├── syntheticTest_geotherm/     # Geotherm-based validation (SC2006 continental)
 │   └── benchmarkTest_vsMatlab/     # Python vs MATLAB VBRc benchmark
 └── bayesian_fitting_py/            # Python package
     ├── run_bayes.py                # Main inversion driver & CLI
@@ -117,16 +121,23 @@ cd /Users/ehightow/Research/V2T_Inversion
 # Benchmark: compare Python vs MATLAB VBRc (sweep comparison, LUT plots, inversion)
 python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
 
-# Self-contained round-trip validation
-python -m vbrc_V2Tpy.validation.validate_roundtrip \
-    --output validation_results/roundtrip_rhoprem_anharmonic \
-    --elastic anharmonic --density prem --solidus hirschmann
+# Synthetic geotherm test (SC2006 continental geotherm, configurable grain size)
+python -m vbrc_V2Tpy.validation.syntheticTest_geotherm
+python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --gs-um 800
 
-# Synthetic adiabat test (realistic CLI pipeline)
-python -m vbrc_V2Tpy.validation.syntheticTest_adiabat
+# Regenerate LUT diagnostic plots from existing sweep (no re-computation)
+python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --replot-lut
 ```
 
-All validation output is written to `validation_results/` in the workspace
+The synthetic geotherm test uses an independent VBR core computation (not grid
+lookup) to generate observations from a realistic continental geotherm (SC2006),
+avoiding the "inverse crime" of inverting on the same grid used to generate the
+data.  It includes a cold lithospheric lid, thermal boundary layer, and
+convecting interior.  See
+[validation/syntheticTest_geotherm/README.md](validation/syntheticTest_geotherm/README.md)
+for details.
+
+All validation output is written to `validation_tests/` in the workspace
 root (outside the git repository).
 
 ## Uninstall

@@ -25,6 +25,9 @@ def plot_lut_at_depth(
     T_lim: Optional[tuple] = None,
     phi_lim: Optional[tuple] = None,
     gs_lim_mm: Optional[tuple] = None,
+    Vs_clim: Optional[tuple] = None,
+    Q_clim: Optional[tuple] = None,
+    Q_log: bool = True,
 ) -> Optional[plt.Figure]:
     """
     Plot lookup table slices at a specific depth, labelled by depth (km).
@@ -45,6 +48,12 @@ def plot_lut_at_depth(
         Directory to save figure. Filename is auto-generated from depth.
     T_lim, phi_lim, gs_lim_mm : tuple, optional
         Axis limits.
+    Vs_clim : tuple of (vmin, vmax), optional
+        Colorbar limits for Vs.  Defaults to 5th/95th percentile of data.
+    Q_clim : tuple of (vmin, vmax), optional
+        Colorbar limits for Q.  Defaults to adaptive percentile of data.
+    Q_log : bool
+        If True (default), use a logarithmic colour scale for Q.
 
     Returns
     -------
@@ -77,13 +86,34 @@ def plot_lut_at_depth(
     # Adaptive colour ranges based on data
     Vs_valid = Vs[np.isfinite(Vs)]
     Q_valid = Q[np.isfinite(Q) & (Q > 0)]
-    Vs_vmin = float(np.percentile(Vs_valid, 5)) if len(Vs_valid) else 4.0
-    Vs_vmax = float(np.percentile(Vs_valid, 95)) if len(Vs_valid) else 5.6
-    Q_vmin = 1 #float(np.percentile(Q_valid, 2)) if len(Q_valid) else 10
-    Q_vmax = 1000 #float(np.percentile(Q_valid, 98)) if len(Q_valid) else 200
+    if Vs_clim is not None:
+        Vs_vmin, Vs_vmax = Vs_clim
+    else:
+        Vs_vmin = float(np.percentile(Vs_valid, 5)) if len(Vs_valid) else 4.0
+        Vs_vmax = float(np.percentile(Vs_valid, 95)) if len(Vs_valid) else 5.6
+    if Q_clim is not None:
+        Q_vmin, Q_vmax = Q_clim
+    else:
+        Q_vmin = 1.0
+        Q_vmax = 5000.0
+
+    # When Q_log is True, plot log10(Q) with a linear colorbar so that
+    # colour resolution is uniform across the dynamic range.
+    if Q_log:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            Q_plot = np.where(Q > 0, np.log10(Q), np.nan)
+        Q_plot_vmin = np.log10(max(Q_vmin, 1.0))
+        Q_plot_vmax = np.log10(Q_vmax)
+        Q_plot_levels = np.linspace(Q_plot_vmin, Q_plot_vmax, 21)
+        Q_label = 'Q'
+    else:
+        Q_plot = Q
+        Q_plot_vmin = Q_vmin
+        Q_plot_vmax = Q_vmax
+        Q_plot_levels = np.linspace(Q_plot_vmin, Q_plot_vmax, 21)
+        Q_label = 'Q'
 
     Vs_levels = np.linspace(Vs_vmin, Vs_vmax, 21)
-    Q_levels = np.linspace(Q_vmin, Q_vmax, 21)
     cmap = 'RdBu'
 
     fig = plt.figure(figsize=figsize)
@@ -95,18 +125,19 @@ def plot_lut_at_depth(
     cax_q = fig.add_subplot(gs_spec[1, 3])
 
     # ---- Row 0: Vs   Row 1: Q ----
-    # Panel (0,0)/(1,0): T fixed → φ vs gs
     for row, (data, levels, vmin, vmax, cax, label) in enumerate([
         (Vs, Vs_levels, Vs_vmin, Vs_vmax, cax_vs, 'Vs (km/s)'),
-        (Q, Q_levels, Q_vmin, Q_vmax, cax_q, 'Q'),
+        (Q_plot, Q_plot_levels, Q_plot_vmin, Q_plot_vmax, cax_q, Q_label),
     ]):
+        contour_levels = levels[::2]  # fewer levels for line contours
+
         # Col 0: T fixed
         ax = axes[row, 0]
         im = ax.contourf(gs_mm, phi_arr, data[i_T_fixed, :, :],
                          levels=levels, cmap=cmap, vmin=vmin, vmax=vmax,
                          extend='both')
         ax.contour(gs_mm, phi_arr, data[i_T_fixed, :, :],
-                   levels=10, colors='k', linewidths=0.5, linestyles='--')
+                   levels=contour_levels, colors='k', linewidths=0.5, linestyles='--')
         ax.set_xlabel('Grain Size (mm)')
         ax.set_ylabel('Melt Fraction, φ')
         if row == 0:
@@ -118,7 +149,7 @@ def plot_lut_at_depth(
                     levels=levels, cmap=cmap, vmin=vmin, vmax=vmax,
                     extend='both')
         ax.contour(gs_mm, T_arr, data[:, i_phi_fixed, :],
-                   levels=10, colors='k', linewidths=0.5, linestyles='--')
+                   levels=contour_levels, colors='k', linewidths=0.5, linestyles='--')
         ax.set_xlabel('Grain Size (mm)')
         ax.set_ylabel('Temperature (°C)')
         if row == 0:
@@ -130,13 +161,19 @@ def plot_lut_at_depth(
                     levels=levels, cmap=cmap, vmin=vmin, vmax=vmax,
                     extend='both')
         ax.contour(phi_arr, T_arr, data[:, :, i_gs_fixed],
-                   levels=10, colors='k', linewidths=0.5, linestyles='--')
+                   levels=contour_levels, colors='k', linewidths=0.5, linestyles='--')
         ax.set_xlabel('Melt Fraction, φ')
         ax.set_ylabel('Temperature (°C)')
         if row == 0:
             ax.set_title(f'd = {gs_arr[i_gs_fixed]/1000:.1f} mm')
 
-        fig.colorbar(im, cax=cax, label=label)
+        cb = fig.colorbar(im, cax=cax, label=label)
+        # For log-Q, relabel ticks with actual Q values
+        if Q_log and row == 1:
+            tick_vals = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+            tick_vals = [v for v in tick_vals if Q_plot_vmin <= np.log10(v) <= Q_plot_vmax]
+            cb.set_ticks([np.log10(v) for v in tick_vals])
+            cb.set_ticklabels([str(v) for v in tick_vals])
 
     # Axis limits
     for ax in axes.flatten():
@@ -178,6 +215,9 @@ def generate_sweep_lut_plots(
     T_lim: Optional[tuple] = None,
     phi_lim: Optional[tuple] = None,
     gs_lim_mm: Optional[tuple] = None,
+    Vs_clim: Optional[tuple] = None,
+    Q_clim: Optional[tuple] = None,
+    Q_log: bool = True,
     verbose: bool = True,
 ) -> int:
     """
@@ -197,6 +237,10 @@ def generate_sweep_lut_plots(
         Slice coordinates for the fixed-variable panels.
     T_lim, phi_lim, gs_lim_mm : tuple, optional
         Axis limits.
+    Vs_clim, Q_clim : tuple of (vmin, vmax), optional
+        Colorbar limits.  Defaults to adaptive percentiles per depth.
+    Q_log : bool
+        Use logarithmic colour scale for Q (default True).
     verbose : bool
         Print progress.
 
@@ -223,6 +267,7 @@ def generate_sweep_lut_plots(
                 T_fixed=T_fixed, phi_fixed=phi_fixed,
                 gs_fixed_mm=gs_fixed_mm, save_dir=method_dir,
                 T_lim=T_lim, phi_lim=phi_lim, gs_lim_mm=gs_lim_mm,
+                Vs_clim=Vs_clim, Q_clim=Q_clim, Q_log=Q_log,
             )
             n_saved += 1
         if verbose:

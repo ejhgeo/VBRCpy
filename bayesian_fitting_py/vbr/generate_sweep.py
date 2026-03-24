@@ -173,7 +173,15 @@ class SweepParams:
         'eburgers_psp', 'andrade_psp', 'xfit_mxw', 'xfit_premelt'
     ])
     eburgers_method: str = 'FastBurger'
+    # xfit_premelt melt effect mode:
+    # 0 = YT2016 (poroelastic via external anh_poro only, default)
+    # 1 = YT2024 (direct melt effects on anelasticity via Beta_B, Beta_P, poro_Lambda)
+    include_direct_melt_effect: int = 0
     gs_type: str = 'log'
+    # Base output directory.  When set, output_file and plot_lut_dir are
+    # derived automatically (sweep.npz and lut_plots/ inside this dir)
+    # unless the user overrides them explicitly.
+    output_dir: Optional[str] = None
     output_file: str = 'sweep.mat'
     # Elastic method: 'anharmonic' (linear Taylor expansion, olivine-based) or
     # 'cammarano2003' (finite-strain mineral physics with depth-dependent mineralogy)
@@ -189,10 +197,17 @@ class SweepParams:
     plot_lut_every_n: int = 1         # plot every n-th depth (1 = all)
     
     def __post_init__(self):
-        """Convert to numpy arrays."""
+        """Convert to numpy arrays and resolve output_dir inheritance."""
         self.T = np.atleast_1d(self.T).astype(float)
         self.phi = np.atleast_1d(self.phi).astype(float)
         self.gs = np.atleast_1d(self.gs).astype(float)
+        # If output_dir is set, derive output_file and plot_lut_dir from it
+        # (unless the user already provided explicit values)
+        if self.output_dir is not None:
+            if self.output_file == 'sweep.mat':
+                self.output_file = os.path.join(self.output_dir, 'sweep.npz')
+            if self.plot_lut_dir == 'lut_plots':
+                self.plot_lut_dir = os.path.join(self.output_dir, 'lut_plots')
 
 
 def generate_parameter_sweep(
@@ -268,6 +283,9 @@ def generate_parameter_sweep(
         print(f"Depth range: {params.z_min:.0f} to {params.z_max:.0f} km ({params.n_z} points)")
         print(f"Period range: {params.per_bw_min:.0f} to {params.per_bw_max:.0f} s")
         print(f"Methods: {', '.join(params.anelastic_methods)}")
+        if 'xfit_premelt' in params.anelastic_methods:
+            melt_mode = 'YT2024 (direct melt effects)' if params.include_direct_melt_effect else 'YT2016 (default)'
+            print(f"  xfit_premelt melt mode: {melt_mode}")
         # Density info
         if params.density_model == 'constant':
             print(f"Density: constant {params.rho:.0f} kg/m³")
@@ -394,14 +412,22 @@ def generate_parameter_sweep(
         if 'eburgers_psp' in params.anelastic_methods:
             vbr.input['anelastic']['eburgers_psp']['method'] = params.eburgers_method
         
+        # Set xfit_premelt direct melt effect mode (YT2016 vs YT2024)
+        if 'xfit_premelt' in params.anelastic_methods:
+            vbr.input['anelastic']['xfit_premelt']['include_direct_melt_effect'] = params.include_direct_melt_effect
+        
         vbr.run()
         
         # Extract mean Vs, Q, and viscosity for each method
-        # Viscosity comes from HK2003 composite (eta_total) — same for all
-        # anelastic methods since it depends only on T, P, phi, gs.
-        eta_total = None
+        # Use method-consistent viscosity: xfit_premelt eta for xfit_premelt,
+        # HK2003 eta_total as fallback for other methods.
+        eta_hk2003 = None
         if 'HK2003' in vbr.output.get('viscous', {}):
-            eta_total = vbr.output['viscous']['HK2003']['eta_total']  # (nT, nphi, ngs)
+            eta_hk2003 = vbr.output['viscous']['HK2003']['eta_total']  # (nT, nphi, ngs)
+        
+        eta_xfit = None
+        if 'xfit_premelt' in vbr.output.get('viscous', {}):
+            eta_xfit = vbr.output['viscous']['xfit_premelt']['diff']['eta']  # (nT, nphi, ngs)
         
         for method in params.anelastic_methods:
             if method in vbr.output['anelastic']:
@@ -414,9 +440,12 @@ def generate_parameter_sweep(
                 Box[method]['meanVs'][:, :, :, i_P] = np.mean(V, axis=-1)
                 Box[method]['meanQ'][:, :, :, i_P] = np.mean(Q, axis=-1)
                 
-                # Viscosity (Pa·s) — not frequency-dependent
-                if eta_total is not None:
-                    Box[method]['meanEta'][:, :, :, i_P] = eta_total
+                # Viscosity (Pa·s) — use the viscosity model consistent with
+                # the anelastic method to avoid comparing different rheologies.
+                if method == 'xfit_premelt' and eta_xfit is not None:
+                    Box[method]['meanEta'][:, :, :, i_P] = eta_xfit
+                elif eta_hk2003 is not None:
+                    Box[method]['meanEta'][:, :, :, i_P] = eta_hk2003
         
         step_time = time.time() - step_start
         if verbose:
@@ -470,6 +499,9 @@ def save_sweep(sweep: Dict[str, Any], filename: str, verbose: bool = True) -> No
     verbose : bool
         Print confirmation message
     """
+    out_dir = os.path.dirname(os.path.abspath(filename))
+    os.makedirs(out_dir, exist_ok=True)
+
     ext = os.path.splitext(filename)[1].lower()
     
     if ext == '.mat':
@@ -816,6 +848,10 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         - andrade_psp
         - xfit_premelt
       eburgers_method: FastBurger  # or 'PointWise'
+      # xfit_premelt direct melt effect (Yamauchi & Takei 2024):
+      #   0 = YT2016 mode (poroelastic effect via external anh_poro only, default)
+      #   1 = YT2024 mode (direct melt effects on anelasticity: Beta_B, Beta_P, poro_Lambda)
+      include_direct_melt_effect: 0
       # Elastic scaling options
       elastic:
         # Method: 'anharmonic' (linear Taylor, olivine) or 'cammarano2003'
@@ -827,7 +863,10 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         pressure_scaling: cammarano
         # Reference values: 'default' (STP olivine) or 'upper_mantle' (Abers & Hacker 2016)
         reference_scaling: default
-      output_file: my_sweep.mat
+      # Output directory — when set, output_file and plot_lut output_dir
+      # are automatically placed inside this directory (unless overridden).
+      output_dir: my_output/
+      # output_file: my_sweep.mat  # optional override (default: output_dir/sweep.npz)
     ```
     """
     import yaml
@@ -912,6 +951,7 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
     # Parse methods
     anelastic_methods = cfg.get('anelastic_methods', ['eburgers_psp', 'andrade_psp', 'xfit_mxw', 'xfit_premelt'])
     eburgers_method = cfg.get('eburgers_method', 'FastBurger')
+    include_direct_melt_effect = cfg.get('include_direct_melt_effect', 0)
     solidus_method = cfg.get('solidus_method', 'hirschmann')
     
     # Parse elastic scaling options
@@ -942,6 +982,9 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         plot_lut_dir = 'lut_plots'
         plot_lut_every_n = 1
 
+    # Parse output_dir (used to auto-derive output_file and plot_lut_dir)
+    output_dir = cfg.get('output_dir', None)
+
     return SweepParams(
         T=T,
         phi=phi,
@@ -961,7 +1004,9 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         Ch2o=Ch2o,
         anelastic_methods=anelastic_methods,
         eburgers_method=eburgers_method,
+        include_direct_melt_effect=include_direct_melt_effect,
         gs_type=gs_type,
+        output_dir=output_dir,
         output_file=cfg.get('output_file', 'sweep.mat'),
         elastic_method=elastic_method,
         temperature_scaling=temperature_scaling,
