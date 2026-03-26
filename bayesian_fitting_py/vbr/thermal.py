@@ -15,6 +15,149 @@ from .params import C2K
 
 R_EARTH_M = 6371e3  # Earth radius in meters
 
+# Mapping of built-in Earth model names to filenames
+_BUILTIN_MODELS = {
+    'prem': 'PREM_for_VBRc.txt',
+    'stw105': 'STW105_for_VBRc.txt',
+}
+
+
+def _load_earth_model(
+    model: str,
+    custom_file: Optional[str] = None,
+    fields: Optional[list] = None,
+) -> tuple:
+    """Load a radial Earth model and return arrays for requested fields.
+
+    Handles the common 5-column space-delimited format
+    (``radius depth density Vs Qmu``) used by the bundled PREM and
+    STW105 files as well as user-supplied custom files in the same format.
+
+    Parameters
+    ----------
+    model : str
+        ``'prem'``, ``'stw105'``, or ``'custom'``.
+    custom_file : str, optional
+        Path to a user-supplied file.  Required when *model* is ``'custom'``.
+    fields : list of str, optional
+        Extra column names to return in addition to ``depth`` and ``density``.
+        Valid names: ``'Vs'``, ``'Qmu'``.  When *None* (default) only
+        ``(depth_m, density)`` is returned for backward compatibility.
+
+    Returns
+    -------
+    tuple
+        ``(depth_m, density)`` when *fields* is None, otherwise
+        ``(depth_m, density, field1_array, field2_array, ...)`` with one
+        extra array per requested field, all sorted with discontinuities
+        preserved by applying a tiny depth offset to duplicates.
+    """
+    if model in _BUILTIN_MODELS:
+        filepath = Path(__file__).parent / _BUILTIN_MODELS[model]
+    elif model == 'custom':
+        if custom_file is None:
+            raise ValueError("density_file is required when density_model='custom'")
+        filepath = Path(custom_file)
+    else:
+        valid = ', '.join([repr(k) for k in _BUILTIN_MODELS] + ["'custom'"])
+        raise ValueError(
+            f"Unknown density model '{model}'. Use one of: {valid}"
+        )
+
+    # Read the 5-column space/whitespace-delimited file
+    data = np.genfromtxt(filepath, names=True)
+    # Columns: radius, depth, density, Vs, Qmu
+    depth_m = data['depth']
+    density = data['density']
+
+    # Gather any extra requested columns
+    extras_raw = []
+    if fields:
+        for fname in fields:
+            extras_raw.append(data[fname])
+
+    sort_idx = np.argsort(depth_m)
+    depth_m = depth_m[sort_idx]
+    density = density[sort_idx]
+    extras_raw = [arr[sort_idx] for arr in extras_raw]
+
+    # Preserve discontinuities: when duplicate depths occur (e.g., 410/410 km),
+    # shift later duplicates by a small epsilon instead of averaging values.
+    depth_eps_m = 100.0  # 0.1 km
+    depth_out = depth_m.astype(float).copy()
+    i = 0
+    n = len(depth_out)
+    while i < n:
+        j = i + 1
+        while j < n and depth_out[j] == depth_out[i]:
+            j += 1
+        count = j - i
+        if count > 1:
+            # Keep first as-is; shift each additional duplicate by +epsilon
+            for k in range(1, count):
+                depth_out[i + k] = depth_out[i] + k * depth_eps_m
+        i = j
+
+    if fields:
+        return (depth_out, density, *extras_raw)
+    return depth_out, density
+
+
+def load_q_from_earth_model(
+    model: str,
+    depth_km: np.ndarray,
+    custom_file: Optional[str] = None,
+) -> np.ndarray:
+    """Return Qmu values interpolated at the requested depths.
+
+    Parameters
+    ----------
+    model : str
+        ``'prem'``, ``'stw105'``, or ``'custom'``.
+    depth_km : array_like
+        Depths in km at which to evaluate Qmu.
+    custom_file : str, optional
+        Path to a custom Earth-model file (same 5-column format).
+
+    Returns
+    -------
+    ndarray
+        Qmu values at the requested depths.
+    """
+    depth_m, _density, qmu = _load_earth_model(
+        model, custom_file=custom_file, fields=['Qmu'],
+    )
+    depth_km_profile = depth_m / 1e3
+    return np.interp(np.asarray(depth_km), depth_km_profile, qmu)
+
+
+def load_vs_from_earth_model(
+    model: str,
+    depth_km: np.ndarray,
+    custom_file: Optional[str] = None,
+) -> np.ndarray:
+    """Return Vs values interpolated at the requested depths.
+
+    Parameters
+    ----------
+    model : str
+        ``'prem'``, ``'stw105'``, or ``'custom'``.
+    depth_km : array_like
+        Depths in km at which to evaluate Vs.
+    custom_file : str, optional
+        Path to a custom Earth-model file (same 5-column format).
+
+    Returns
+    -------
+    ndarray
+        Vs values (km/s) at the requested depths.
+    """
+    depth_m, _density, vs = _load_earth_model(
+        model, custom_file=custom_file, fields=['Vs'],
+    )
+    depth_km_profile = depth_m / 1e3
+    return np.interp(np.asarray(depth_km), depth_km_profile, vs)
+
 
 def solidus(
     P_Pa: ArrayLike,
@@ -47,12 +190,12 @@ def solidus(
         Depth in km. Only used by 'yk2001'. When provided, bypasses
         pressure-to-depth conversion for self-consistency.
     density_model : str
-        Density model for P-to-depth conversion ('constant', 'prem', or
-        'custom'). Only used by 'yk2001' when *depth_km* is None.
+        Density model for P-to-depth conversion ('constant', 'prem',
+        'stw105', or 'custom'). Only used by 'yk2001' when *depth_km* is None.
     density_rho : float
         Constant density in kg/m³. Only used when density_model='constant'.
     density_file : str, optional
-        Path to custom density CSV. Required when density_model='custom'.
+        Path to custom density file. Required when density_model='custom'.
         
     Returns
     -------
@@ -199,13 +342,14 @@ def _pressure_to_depth_km(
     P_GPa : array
         Pressure in GPa.
     density_model : str
-        ``'constant'`` for a uniform density, or ``'prem'`` / ``'custom'``
-        for a depth-dependent radial Earth model.
+        ``'constant'`` for a uniform density, or ``'prem'`` / ``'stw105'`` /
+        ``'custom'`` for a depth-dependent radial Earth model.
     density_rho : float
         Density in kg/m³ (used only when *density_model* is ``'constant'``).
     density_file : str, optional
-        Path to a custom density CSV (columns ``depth_km``, ``density``).
-        Required when *density_model* is ``'custom'``.
+        Path to a custom density file.  Required when *density_model* is
+        ``'custom'``.  Must use the same 5-column whitespace-delimited
+        format as the bundled models (``radius depth density Vs Qmu``).
 
     Returns
     -------
@@ -218,36 +362,7 @@ def _pressure_to_depth_km(
         return P_GPa * 1e9 / (density_rho * g) / 1e3
 
     # Build a forward z → P(z) profile from the density model, then invert
-    if density_model == 'prem':
-        prem_file = Path(__file__).parent / 'PREM_for_VBRc.csv'
-        data = np.genfromtxt(prem_file, delimiter=',', skip_header=1)
-        radius_m = data[:, 0]
-        density = data[:, 1]
-        depth_m = R_EARTH_M - radius_m
-        sort_idx = np.argsort(depth_m)
-        depth_m = depth_m[sort_idx]
-        density = density[sort_idx]
-        # Average duplicate depths at discontinuities
-        unique_depths, inv = np.unique(depth_m, return_inverse=True)
-        unique_density = np.zeros(len(unique_depths))
-        for i in range(len(unique_depths)):
-            unique_density[i] = np.mean(density[inv == i])
-        depth_m = unique_depths
-        density = unique_density
-    elif density_model == 'custom':
-        if density_file is None:
-            raise ValueError("density_file is required when density_model='custom'")
-        csv = np.genfromtxt(density_file, delimiter=',', names=True)
-        depth_m = csv['depth_km'] * 1e3
-        density = csv['density']
-        sort_idx = np.argsort(depth_m)
-        depth_m = depth_m[sort_idx]
-        density = density[sort_idx]
-    else:
-        raise ValueError(
-            f"Unknown density_model '{density_model}'. "
-            "Use 'constant', 'prem', or 'custom'."
-        )
+    depth_m, density = _load_earth_model(density_model, custom_file=density_file)
 
     # Lithostatic pressure: P(z) = g * ∫₀ᶻ ρ(z') dz'
     P_Pa = np.zeros(len(depth_m))
@@ -283,12 +398,12 @@ def _solidus_yk2001(
         conversion).  When *None*, depth is computed from *P_GPa* using the
         specified density model.
     density_model : str
-        ``'constant'``, ``'prem'``, or ``'custom'``.  Only used if
+        ``'constant'``, ``'prem'``, ``'stw105'``, or ``'custom'``.  Only used if
         *depth_km* is None.
     density_rho : float
         Constant density in kg/m³ (only used when density_model='constant').
     density_file : str, optional
-        Path to custom density CSV (only used when density_model='custom').
+        Path to custom density file (only used when density_model='custom').
 
     Returns
     -------

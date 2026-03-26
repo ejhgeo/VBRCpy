@@ -30,19 +30,26 @@ import hashlib
 import subprocess
 import numpy as np
 import scipy.io as sio
+import yaml
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 BENCHMARK_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(BENCHMARK_DIR, '..', '..', '..'))
-OUTPUT_DIR = os.path.join(REPO_ROOT, 'validation_results', 'benchmarkTest_vsMatlab')
 
-SWEEP_CONFIG = os.path.join(BENCHMARK_DIR, 'sweep_config.yaml')
-INVERSION_CONFIG = os.path.join(BENCHMARK_DIR, 'inversion_config.yaml')
-SWEEP_FILE = os.path.join(OUTPUT_DIR, 'sweep.npz')
-SWEEP_FINGERPRINT = os.path.join(OUTPUT_DIR, 'sweep_fingerprint.json')
+CONFIG_FILE = os.path.join(BENCHMARK_DIR, 'config.yaml')
 MATLAB_SWEEP = os.path.join(REPO_ROOT, 'vbr', 'test.mat')
+
+# All output paths derive from the single output_dir in config.yaml.
+with open(CONFIG_FILE, 'r') as _f:
+    _cfg = yaml.safe_load(_f)
+_output_dir_rel = _cfg.get('output_dir', 'validation_tests/benchmarkTest_vsMatlab')
+OUTPUT_DIR = os.path.join(REPO_ROOT, _output_dir_rel)
+
+SWEEP_FILE        = os.path.join(OUTPUT_DIR, 'sweep.npz')
+SWEEP_FINGERPRINT = os.path.join(OUTPUT_DIR, 'sweep_fingerprint.json')
+INVERSION_DIR     = os.path.join(OUTPUT_DIR, 'inversion_results')
 
 METHODS = ['andrade_psp', 'eburgers_psp', 'xfit_mxw', 'xfit_premelt']
 
@@ -54,8 +61,16 @@ LUT_P_GPA_FIXED = [2.0]
 # Sweep config fingerprinting
 # ===================================================================
 def _config_fingerprint(config_path):
-    with open(config_path, 'rb') as f:
-        return hashlib.sha256(f.read()).hexdigest()
+    """SHA-256 hash of only the sweep_generation section of the config.
+
+    Ignores inversion-only parameters so that changing priors or output
+    settings does not trigger unnecessary sweep regeneration.
+    """
+    import json as _json
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+    section = cfg.get('sweep_generation', {})
+    return hashlib.sha256(_json.dumps(section, sort_keys=True).encode()).hexdigest()
 
 
 def _sweep_needs_regeneration():
@@ -63,16 +78,16 @@ def _sweep_needs_regeneration():
         return True
     if not os.path.isfile(SWEEP_FINGERPRINT):
         return True
-    current = _config_fingerprint(SWEEP_CONFIG)
+    current = _config_fingerprint(CONFIG_FILE)
     with open(SWEEP_FINGERPRINT, 'r') as f:
         saved = json.load(f).get('hash')
     return current != saved
 
 
 def _save_sweep_fingerprint():
-    fp = _config_fingerprint(SWEEP_CONFIG)
+    fp = _config_fingerprint(CONFIG_FILE)
     with open(SWEEP_FINGERPRINT, 'w') as f:
-        json.dump({'hash': fp, 'config': SWEEP_CONFIG}, f)
+        json.dump({'hash': fp, 'config': CONFIG_FILE}, f)
 
 
 # ===================================================================
@@ -341,13 +356,15 @@ def main():
     if _sweep_needs_regeneration():
         if os.path.isfile(SWEEP_FILE):
             print("  Sweep config changed — regenerating ...")
-        cmd = [
-            python, '-m',
-            'vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep',
-            '--config', SWEEP_CONFIG,
-        ]
-        print(f"  Running: {' '.join(cmd)}\n", flush=True)
-        subprocess.run(cmd, check=True)
+        from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import (
+            load_sweep_params_from_yaml as _lspy,
+            generate_parameter_sweep as _gps,
+            save_sweep as _ss,
+        )
+        _params = _lspy(CONFIG_FILE)
+        _params.output_file = SWEEP_FILE
+        _sweep = _gps(_params)
+        _ss(_sweep, _params.output_file)
         _save_sweep_fingerprint()
     else:
         print(f"  Sweep up-to-date at {SWEEP_FILE} — skipping generation.")
@@ -382,7 +399,9 @@ def main():
     cmd = [
         python, '-m',
         'vbrc_V2Tpy.bayesian_fitting_py',
-        '--config', INVERSION_CONFIG,
+        '--config', CONFIG_FILE,
+        '--sweep-file', SWEEP_FILE,
+        '--output-dir', INVERSION_DIR,
     ]
     print(f"  Running: {' '.join(cmd)}\n", flush=True)
     subprocess.run(cmd, check=True)

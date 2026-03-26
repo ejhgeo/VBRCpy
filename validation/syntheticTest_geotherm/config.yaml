@@ -1,0 +1,91 @@
+# ============================================================================
+# Combined config for the geotherm round-trip validation (syntheticTest_geotherm).
+#
+# Run with:
+#   python -m vbrc_V2Tpy.validation.syntheticTest_geotherm.run_example
+# ============================================================================
+
+# ── Output ───────────────────────────────────────────────────────────────────
+# Change this ONE line to redirect all outputs to a new directory.
+# The runner (run_example.py) automatically places outputs as follows:
+#   sweep.npz                           →  output_dir/
+#   lut_plots/                          →  output_dir/
+#   synthetic_observations.csv          →  output_dir/
+#   inversion results & plots           →  output_dir/inversion_results/
+output_dir: validation_tests/syntheticTest_geotherm_newDataLoader
+
+
+# ── Sweep generation ─────────────────────────────────────────────────────────
+# Parameters for building the VBR look-up table used by both the forward model
+# and the Bayesian inversion.  Output path is controlled by output_dir above;
+# do not add output_dir or output_file inside this section.
+sweep_generation:
+  temperature:
+    min: 100
+    max: 2200
+    step: 20
+
+  melt_fraction:
+    min: 0
+    max: 0.05
+    n_points: 21
+    type: linear
+
+  grain_size:
+    min: 100       # 0.1 mm
+    max: 10000     # 10 mm
+    n_points: 25
+    type: log
+
+  depth:
+    min: 10
+    max: 660
+    n_points: 131  # gives exactly 5 km spacing
+
+  freq_log_min: -2.2
+  freq_log_max: -1.3
+  n_freq: 10
+
+  anelastic_methods:
+    - xfit_premelt
+
+  elastic:
+    method: cammarano2003
+
+  density_model: prem
+
+  solidus_method: yk2001
+
+  plot_lut:
+    enabled: true
+    every_n: 5
+
+  include_direct_melt_effect: 1
+
+
+# ── Inversion settings ────────────────────────────────────────────────────────
+# The synthetic observations CSV, sweep file, and inversion output directory
+# are all derived from output_dir automatically by run_example.py.
+# Do not set vs_file, q_file, or sweep_file here.
+location_mode: model
+
+default_vs_error: 0.05
+default_q_error: 12.0
+q_error_mode: percent   # Q error as a percent of observed Q
+
+anelastic_methods:
+  - xfit_premelt
+
+gs_prior_type: log_normal
+gs_prior_mean_mm: 0.8
+gs_prior_std: 0.25
+
+phi_prior_type: piecewise_depth
+phi_onset_depth_km: 80.0
+
+obs_types: VsQ
+
+save_plots: true
+force_plots: true
+plot_every_n: 13
+save_ml_csv: true

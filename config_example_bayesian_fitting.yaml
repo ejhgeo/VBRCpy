@@ -7,26 +7,19 @@
 # ----------------------------------------------------------------------------
 # How to specify locations for the inversion:
 #   - 'manual': specify locations, names, z_ranges directly below
-#   - 'locations_file': load locations from a CSV/text file (seismic from .mat)
-#   - 'csv_model': load locations AND seismic data from a single CSV file
-#   - 'mat_model': load locations AND seismic data from a .mat file with depths
-#   - 'netcdf_model': load locations AND seismic data from a NetCDF file
+#   - 'locations_file': load locations from a CSV/text file
+#   - 'model': locations AND seismic data read from vs_file (format auto-detected)
 location_mode: 'locations_file'  
 
 # For 'locations_file' mode: path to location file
 # Format: lon, lat, [name], z_min, z_max (comma or whitespace separated)
 location_file: ./test_locations.csv
 
-# For 'csv_model', 'mat_model', or 'netcdf_model' modes:
-#   - seismic_model_file: path to the file containing locations + Vs/Q data
+# For 'model' mode:
+#   - vs_file provides the location grid AND Vs data
+#   - q_file provides Q data (can be same file, different file, or a 1D model)
 #   - model_z_range: optional depth range filter [z_min, z_max] in km
 #   - model_subsample: use every Nth point (1 = all points)
-#   - default_vs_error: default Vs error (km/s) if not in file (default: 0.05)
-#   - default_q_error: default Q error if not in file (default: 10.0)
-
-# seismic_model_file: './test_Pat_model.csv'
-# seismic_model_file: '/Users/ehightow/Research/PatagoniaGIA/Tomography/3_D_model_WashU.nc'
-# seismic_model_file: './data/vel_models/Shen_Ritzwoller_2016.mat'
 # model_z_range: [99.6, 100.4]
 # model_subsample: 10
 default_vs_error: 0.05
@@ -67,6 +60,15 @@ location_colors:
 # ----------------------------------------------------------------------------
 # DATA FILES
 # ----------------------------------------------------------------------------
+# vs_file / q_file accept any supported format: .mat, .csv, .nc, or a built-in
+# 1D Earth model name ('prem', 'stw105').  Format is auto-detected.
+# In 'model' mode, vs_file also provides the location grid.
+# Examples:
+#   vs_file: ./my_model.csv            # CSV with lon, lat, depth, Vs columns
+#   vs_file: ./my_model.nc             # NetCDF file
+#   vs_file: ./my_model.mat            # MATLAB .mat file
+#   q_file: prem                       # Use PREM Qmu profile
+#   q_file: stw105                     # Use STW105 Qmu profile
 vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
 q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
 lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
@@ -91,6 +93,16 @@ anelastic_methods:
 gs_prior_type: log_normal
 gs_prior_mean_mm: 10.0
 gs_prior_std: 0.25
+
+# Melt fraction prior:
+#   phi_prior_type: 'uniform' (default), 'zero_melt', 'piecewise_depth', or 'temperature_dependent'
+#   phi_onset_depth_km: onset depth in km for piecewise_depth (default 80.0)
+#     - uniform: flat prior over sweep range (current behavior)
+#     - zero_melt: strongly suppress melt everywhere (narrow normal at phi=0)
+#     - piecewise_depth: uniform above onset_depth_km, zero-melt below
+#     - temperature_dependent: placeholder for future implementation
+phi_prior_type: uniform
+# phi_onset_depth_km: 80.0  # only used with piecewise_depth
 
 # Observations to use: Vs, Q, or VsQ (both)
 obs_types: VsQ

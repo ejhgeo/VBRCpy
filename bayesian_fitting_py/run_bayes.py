@@ -13,7 +13,7 @@ import json
 import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Union
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields as _dc_fields
 import pickle
 
 # Resolve the bundled data directory: <package_root>/../data/
@@ -31,17 +31,23 @@ from .data_processing import (
     load_seismic_model_from_csv,
     load_seismic_model_from_mat,
     load_seismic_model_from_netcdf,
+    detect_file_type,
+    load_seismic_model_universal,
 )
 from .fitting import (
     fit_seismic_observations,
     fit_preloaded_observations,
-    GrainSizePrior,
     load_sweep_data,
     extract_ml_estimates,
     extract_ml_from_joint,
 )
-from .prior import store_ensemble
+from .prior import (
+    store_ensemble,
+    GrainSizePrior,
+    MeltFractionPrior,
+)
 from .parallel import run_locations_parallel
+from .vbr.thermal import load_q_from_earth_model, load_vs_from_earth_model
 from .plotting import (
     plot_tradeoffs_posterior,
     plot_regional_fits,
@@ -55,27 +61,21 @@ from .plotting import (
 AVAILABLE_ANELASTIC_METHODS = ['andrade_psp', 'eburgers_psp', 'xfit_mxw', 'xfit_premelt']
 
 # Available location/data input modes
-LOCATION_MODES = ['manual', 'locations_file', 'csv_model', 'mat_model', 'netcdf_model']
+LOCATION_MODES = ['manual', 'locations_file', 'model']
 
 
 @dataclass
 class InversionConfig:
     """Configuration for Bayesian inversion."""
     
-    # Location/data input mode determines how locations and seismic data are provided:
-    # - 'manual': locations from config, seismic data extracted from vs_file/q_file .mat files
-    # - 'locations_file': locations from CSV file, seismic data from vs_file/q_file .mat files
-    # - 'csv_model': locations AND seismic data from a single CSV file
-    # - 'mat_model': locations AND seismic data from a .mat file (uses model depths)
-    # - 'netcdf_model': locations AND seismic data from a NetCDF file (uses model depths)
+    # Location/data input mode determines how locations are provided:
+    # - 'manual': locations from config, seismic data extracted from vs_file/q_file
+    # - 'locations_file': locations from CSV file, seismic data from vs_file/q_file
+    # - 'model': locations AND seismic data from vs_file (file format auto-detected)
     location_mode: str = 'manual'
     
     # For 'locations_file' mode: path to location file (CSV/text with columns: lon, lat, [name], z_min, z_max)
     location_file: Optional[str] = None
-    
-    # For 'csv_model', 'mat_model', 'netcdf_model' modes:
-    # Path to the seismic model file containing locations AND observations
-    seismic_model_file: Optional[str] = None
     
     # Default errors for seismic observations (used when not provided in data files)
     default_vs_error: float = 0.05  # km/s
@@ -83,8 +83,7 @@ class InversionConfig:
     # Q error mode: 'absolute' (default) or 'percent' (error as % of Q value)
     q_error_mode: str = 'absolute'
     
-    # For model modes: depth range filter (optional)
-    # For 'csv_model', 'mat_model', 'netcdf_model': filters which depths to include
+    # For 'model' mode: depth range filter (optional)
     model_z_range: Optional[Tuple[float, float]] = None
     
     # Skip every N points to reduce computation (1 = use all points)
@@ -105,8 +104,10 @@ class InversionConfig:
     )
     
     # File paths for seismic data sources.
-    # Users should set these in their config file (paths relative to cwd or absolute).
-    # If omitted, defaults point to the example data bundled with the package.
+    # vs_file / q_file accept any supported format (.mat, .csv, .nc) or a built-in
+    # 1D Earth model name ('prem', 'stw105').  File type is auto-detected from the
+    # extension.  In 'model' mode vs_file also supplies the location grid.
+    # If the same file contains both Vs and Q, set both to the same path.
     vs_file: str = field(default_factory=lambda: _default_data_path('vel_models', 'Shen_Ritzwoller_2016.mat'))
     q_file: str = field(default_factory=lambda: _default_data_path('Q_models', 'Dalton_Ekstrom_2008.mat'))
     lab_file: str = field(default_factory=lambda: _default_data_path('LAB_models', 'HopperFischer2018.mat'))
@@ -127,6 +128,14 @@ class InversionConfig:
     gs_prior_mean_mm: Optional[float] = None
     # For log_normal: std dev in log-space (dimensionless, default 0.25)
     gs_prior_std: Optional[float] = None
+    
+    # Melt fraction prior configuration
+    # phi_prior_type: 'uniform' (flat), 'zero_melt' (suppress all melt),
+    #   'piecewise_depth' (uniform above onset, zero below),
+    #   'temperature_dependent' (placeholder for future T-aware prior)
+    phi_prior_type: str = 'uniform'
+    # For piecewise_depth: depth (km) below which melt is suppressed
+    phi_onset_depth_km: float = 80.0
     
     # Observation types to use: 'Vs', 'Q', or 'VsQ' (both)
     obs_types: str = 'VsQ'
@@ -186,6 +195,29 @@ class InversionConfig:
                 data['gs_prior_type'] = 'log_uniform'
         elif 'gs_prior_case' in data:
             data.pop('gs_prior_case')  # new fields take precedence
+
+        # Backward compatibility: translate old location modes & seismic_model_file
+        if 'location_mode' in data:
+            mode = data['location_mode']
+            if mode in ('csv_model', 'mat_model', 'netcdf_model'):
+                data['location_mode'] = 'model'
+        # Old configs may have seismic_model_file instead of vs_file
+        if 'seismic_model_file' in data:
+            smf = data.pop('seismic_model_file')
+            if smf is not None:
+                data.setdefault('vs_file', smf)
+                data.setdefault('q_file', smf)
+        # Old configs may have q_model; fold into q_file
+        if 'q_model' in data:
+            qm = data.pop('q_model')
+            if qm is not None:
+                data['q_file'] = qm
+
+        # Strip keys unknown to this dataclass (allows combined config files
+        # that include a sweep_generation section or other extra top-level keys)
+        known = {f.name for f in _dc_fields(cls)}
+        data = {k: v for k, v in data.items() if k in known}
+
         return cls(**data)
     
     @classmethod
@@ -338,6 +370,31 @@ def get_grain_size_prior(config: 'InversionConfig') -> Tuple[GrainSizePrior, str
     return prior, fig_prefix
 
 
+def get_melt_fraction_prior(config: 'InversionConfig') -> MeltFractionPrior:
+    """Build melt fraction prior from config fields.
+
+    Returns
+    -------
+    MeltFractionPrior
+    """
+    ptype = config.phi_prior_type
+
+    if ptype == 'uniform':
+        return MeltFractionPrior(phi_prior_type='uniform')
+    elif ptype == 'zero_melt':
+        return MeltFractionPrior(phi_prior_type='zero_melt')
+    elif ptype == 'piecewise_depth':
+        return MeltFractionPrior(
+            phi_prior_type='piecewise_depth',
+            onset_depth_km=config.phi_onset_depth_km,
+        )
+    elif ptype == 'temperature_dependent':
+        return MeltFractionPrior(phi_prior_type='temperature_dependent')
+    else:
+        print(f"Warning: unknown phi_prior_type '{ptype}', using uniform")
+        return MeltFractionPrior(phi_prior_type='uniform')
+
+
 def prepare_locations(config: InversionConfig) -> Tuple[
     List[Tuple[float, float]], 
     List[str], 
@@ -361,8 +418,8 @@ def prepare_locations(config: InversionConfig) -> Tuple[
         For 'manual' and 'locations_file' modes:
             seismic_model_data is None (observations loaded from files during fitting)
         
-        For 'csv_model', 'mat_model', and 'netcdf_model' modes:
-            seismic_model_data contains pre-loaded observations
+        For 'model' mode:
+            seismic_model_data contains pre-loaded observations from vs_file
     """
     seismic_model_data = None
     
@@ -380,49 +437,17 @@ def prepare_locations(config: InversionConfig) -> Tuple[
         # Generate colors for file-loaded locations
         colors = generate_colors(len(locations))
     
-    elif config.location_mode == 'csv_model':
-        # Load locations AND seismic data from a single CSV file
-        if config.seismic_model_file is None:
-            raise ValueError("location_mode='csv_model' requires seismic_model_file to be specified")
-        
-        seismic_model_data = load_seismic_model_from_csv(
-            config.seismic_model_file,
-            z_range=config.model_z_range,
-            subsample=config.model_subsample,
-            default_vs_error=config.default_vs_error,
-            default_q_error=config.default_q_error,
-            q_error_mode=config.q_error_mode,
-        )
-        locations = seismic_model_data.locations
-        names = seismic_model_data.names
-        z_ranges = seismic_model_data.z_ranges
-        colors = generate_colors(len(locations))
-        
-    elif config.location_mode == 'mat_model':
-        # Load locations AND seismic data from .mat file
-        if config.seismic_model_file is None:
-            raise ValueError("location_mode='mat_model' requires seismic_model_file to be specified")
-        
-        seismic_model_data = load_seismic_model_from_mat(
-            config.seismic_model_file,
-            z_range=config.model_z_range,
-            subsample=config.model_subsample,
-            default_vs_error=config.default_vs_error,
-            default_q_error=config.default_q_error,
-            q_error_mode=config.q_error_mode,
-        )
-        locations = seismic_model_data.locations
-        names = seismic_model_data.names
-        z_ranges = seismic_model_data.z_ranges
-        colors = generate_colors(len(locations))
-        
-    elif config.location_mode == 'netcdf_model':
-        # Load locations AND seismic data from NetCDF file
-        if config.seismic_model_file is None:
-            raise ValueError("location_mode='netcdf_model' requires seismic_model_file to be specified")
-        
-        seismic_model_data = load_seismic_model_from_netcdf(
-            config.seismic_model_file,
+    elif config.location_mode == 'model':
+        # Load locations AND seismic data from vs_file (format auto-detected)
+        vs_type = detect_file_type(config.vs_file)
+        if vs_type == 'earth_model':
+            raise ValueError(
+                f"vs_file='{config.vs_file}' is a 1D Earth model and cannot "
+                "provide a location grid.  Use 'manual' or 'locations_file' "
+                "mode, or provide a .mat/.csv/.nc file for vs_file."
+            )
+        seismic_model_data = load_seismic_model_universal(
+            config.vs_file,
             z_range=config.model_z_range,
             subsample=config.model_subsample,
             default_vs_error=config.default_vs_error,
@@ -491,6 +516,87 @@ def run_bayesian_inversion(
     n_locations = len(locations)
     print(f"Total locations to process: {n_locations}")
     
+    # ---- Merge Q data from q_file when it differs from vs_file ----
+    # In 'model' mode, seismic_model_data was loaded from vs_file which may
+    # already contain Q.  If q_file points to a different source we override.
+    # In 'manual'/'locations_file' modes, seismic_model_data is None; overrides
+    # are passed directly to fit_seismic_observations via the override params.
+
+    # Detect file types for vs_file and q_file
+    vs_ftype = detect_file_type(config.vs_file)
+    q_ftype = detect_file_type(config.q_file)
+
+    # Per-location override arrays (used in the sequential non-preloaded loop)
+    vs_override_values = None
+    vs_override_errors = None
+    q_override_values = None
+    q_override_errors = None
+
+    if config.location_mode == 'model':
+        # seismic_model_data already has Vs from vs_file.
+        # Merge Q from q_file if it is a different source.
+        if os.path.abspath(config.q_file) != os.path.abspath(config.vs_file):
+            if q_ftype == 'earth_model':
+                q_depths = np.array([
+                    float(d) if d is not None else (zr[0] + zr[1]) / 2.0
+                    for d, zr in zip(seismic_model_data.depths, z_ranges)
+                ])
+                q_vals = load_q_from_earth_model(
+                    config.q_file.lower(), q_depths,
+                )
+                if config.q_error_mode == 'percent':
+                    q_errs = q_vals * config.default_q_error / 100.0
+                else:
+                    q_errs = np.full_like(q_vals, config.default_q_error)
+                seismic_model_data.Q = q_vals
+                seismic_model_data.Q_error = q_errs
+                print(f"Q observations loaded from 1D model: {config.q_file}")
+            else:
+                # Load Q from a separate multi-point file
+                q_data = load_seismic_model_universal(
+                    config.q_file,
+                    z_range=config.model_z_range,
+                    subsample=config.model_subsample,
+                    default_vs_error=config.default_vs_error,
+                    default_q_error=config.default_q_error,
+                    q_error_mode=config.q_error_mode,
+                )
+                if q_data.has_q():
+                    if len(q_data) == len(seismic_model_data):
+                        seismic_model_data.Q = q_data.Q
+                        seismic_model_data.Q_error = q_data.Q_error
+                    else:
+                        print(f"Warning: q_file has {len(q_data)} points vs "
+                              f"{len(seismic_model_data)} in vs_file — "
+                              "Q from q_file ignored (grid mismatch)")
+                print(f"Q observations loaded from: {config.q_file}")
+
+    else:
+        # manual / locations_file modes — prepare per-location overrides
+        # for any source that is an Earth model (not a .mat file)
+        mid_depths = np.array([(zr[0] + zr[1]) / 2.0 for zr in z_ranges])
+
+        if vs_ftype == 'earth_model':
+            vs_override_values = load_vs_from_earth_model(
+                config.vs_file.lower(), mid_depths,
+            )
+            vs_override_errors = np.full_like(
+                vs_override_values, config.default_vs_error,
+            )
+            print(f"Vs observations loaded from 1D model: {config.vs_file}")
+
+        if q_ftype == 'earth_model':
+            q_override_values = load_q_from_earth_model(
+                config.q_file.lower(), mid_depths,
+            )
+            if config.q_error_mode == 'percent':
+                q_override_errors = q_override_values * config.default_q_error / 100.0
+            else:
+                q_override_errors = np.full_like(
+                    q_override_values, config.default_q_error,
+                )
+            print(f"Q observations loaded from 1D model: {config.q_file}")
+
     # Determine if we're using pre-loaded observations (model modes)
     use_preloaded = seismic_model_data is not None
     if use_preloaded:
@@ -531,14 +637,19 @@ def run_bayesian_inversion(
     # Setup grain size prior
     grain_size_prior, fig_prefix_dir = get_grain_size_prior(config)
     
+    # Setup melt fraction prior
+    melt_fraction_prior = get_melt_fraction_prior(config)
+    
     # Setup file paths based on obs_types
+    # filenames dict is only used for .mat file loading in manual/locations_file
+    # modes.  Earth model names ('prem', 'stw105') are handled via overrides.
     filenames = {}
     use_vs = config.obs_types in ['Vs', 'VsQ', 'both']
     use_q = config.obs_types in ['Q', 'VsQ', 'both']
     
-    if use_vs:
+    if use_vs and vs_ftype != 'earth_model':
         filenames['Vs'] = config.vs_file
-    if use_q:
+    if use_q and q_ftype != 'earth_model':
         filenames['Q'] = config.q_file
     filenames['LAB'] = config.lab_file
     
@@ -589,6 +700,7 @@ def run_bayesian_inversion(
                 n_workers=n_workers,
                 use_vs=use_vs,
                 use_q=use_q,
+                melt_fraction_prior=melt_fraction_prior,
             )
             _elapsed = _time.time() - _t0
             print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")
@@ -691,6 +803,7 @@ def run_bayesian_inversion(
                             obs_vs, sigma_vs, obs_q, sigma_q,
                             (z_min, z_max), anelastic_method, grain_size_prior,
                             sweep_file=config.sweep_file,
+                            melt_fraction_prior=melt_fraction_prior,
                         )
                         first_run = False
                     else:
@@ -698,19 +811,35 @@ def run_bayesian_inversion(
                             obs_vs, sigma_vs, obs_q, sigma_q,
                             (z_min, z_max), anelastic_method, grain_size_prior,
                             sweep=sweep,
+                            melt_fraction_prior=melt_fraction_prior,
                         )
                 else:
                     # Load observations from files (original behavior)
+                    # Optionally override Vs/Q with values from 1D Earth model
+                    vs_ovr = float(vs_override_values[il]) if vs_override_values is not None and use_vs else None
+                    svs_ovr = float(vs_override_errors[il]) if vs_override_errors is not None and use_vs else None
+                    q_ovr = float(q_override_values[il]) if q_override_values is not None and use_q else None
+                    sq_ovr = float(q_override_errors[il]) if q_override_errors is not None and use_q else None
                     if first_run:
                         posterior, sweep = fit_seismic_observations(
                             filenames, location, anelastic_method, grain_size_prior,
                             sweep_file=config.sweep_file,
+                            melt_fraction_prior=melt_fraction_prior,
+                            obs_vs_override=vs_ovr,
+                            sigma_vs_override=svs_ovr,
+                            obs_q_override=q_ovr,
+                            sigma_q_override=sq_ovr,
                         )
                         first_run = False
                     else:
                         posterior, sweep = fit_seismic_observations(
                             filenames, location, anelastic_method, grain_size_prior,
                             sweep=sweep,
+                            melt_fraction_prior=melt_fraction_prior,
+                            obs_vs_override=vs_ovr,
+                            sigma_vs_override=svs_ovr,
+                            obs_q_override=q_ovr,
+                            sigma_q_override=sq_ovr,
                         )
             except Exception as e:
                 if not large_scale_run:
@@ -1120,14 +1249,14 @@ Examples:
   # Load locations from a file (seismic data still from .mat files)
   python -m bayesian_fitting_py --location-mode locations_file --location-file locations.txt
 
-  # Load entire seismic model from CSV file (locations + Vs/Q from same file)
-  python -m bayesian_fitting_py --location-mode csv_model --seismic-model-file model.csv
+  # Load seismic model from a file (locations + Vs/Q, format auto-detected)
+  python -m bayesian_fitting_py --location-mode model --vs-file model.csv
 
-  # Load seismic model from .mat file using exact depths
-  python -m bayesian_fitting_py --location-mode mat_model --seismic-model-file model.mat
+  # Separate Vs and Q sources (same or different file)
+  python -m bayesian_fitting_py --location-mode model --vs-file model.nc --q-file q_model.nc
 
-  # Load seismic model from NetCDF file
-  python -m bayesian_fitting_py --location-mode netcdf_model --seismic-model-file model.nc
+  # Use PREM Q values with a 3D Vs model
+  python -m bayesian_fitting_py --location-mode model --vs-file model.mat --q-file prem
         """
     )
     parser.add_argument(
@@ -1152,6 +1281,15 @@ Examples:
         help='Std dev in log-space for log_normal prior (default: 0.25)'
     )
     parser.add_argument(
+        '--phi-prior-type', type=str, default=None,
+        choices=['uniform', 'zero_melt', 'piecewise_depth', 'temperature_dependent'],
+        help='Melt fraction prior: uniform (default), zero_melt, piecewise_depth, temperature_dependent'
+    )
+    parser.add_argument(
+        '--phi-onset-depth', type=float, default=None,
+        help='Onset depth (km) for piecewise_depth melt prior (default: 80.0)'
+    )
+    parser.add_argument(
         '--output-dir', type=str, default=None,
         help='Output directory for plots'
     )
@@ -1173,6 +1311,21 @@ Examples:
         help='Observation types to use: Vs only, Q only, or both (VsQ)'
     )
     parser.add_argument(
+        '--vs-file', type=str, default=None,
+        help=(
+            'Vs data source: path to .mat/.csv/.nc file, or a built-in '
+            'model name (prem, stw105).  In model mode also provides the '
+            'location grid.'
+        )
+    )
+    parser.add_argument(
+        '--q-file', type=str, default=None,
+        help=(
+            'Q data source: path to .mat/.csv/.nc file, or a built-in '
+            'model name (prem, stw105).  Can be the same file as --vs-file.'
+        )
+    )
+    parser.add_argument(
         '--anelastic-methods', type=str, default=None,
         help=(
             'Anelastic method(s) to use. Options: single method (e.g., "xfit_premelt"), '
@@ -1191,10 +1344,8 @@ Examples:
         help=(
             'Location specification mode: '
             'manual (use config), '
-            'locations_file (load locations from file, seismic from .mat), '
-            'csv_model (locations + seismic from CSV), '
-            'mat_model (locations + seismic from .mat with depths), '
-            'netcdf_model (locations + seismic from NetCDF)'
+            'locations_file (load locations from file), '
+            'model (locations + seismic data from vs_file, format auto-detected)'
         )
     )
     parser.add_argument(
@@ -1203,7 +1354,7 @@ Examples:
     )
     parser.add_argument(
         '--seismic-model-file', type=str, default=None,
-        help='Path to seismic model file (for csv_model, mat_model, or netcdf_model modes)'
+        help='Deprecated: use --vs-file instead.  Sets both vs_file and q_file for backward compat.'
     )
     parser.add_argument(
         '--model-z-range', type=str, default=None,
@@ -1236,6 +1387,10 @@ Examples:
             '0 = auto (all CPU cores), 1 = sequential (default). '
             'Only used with preloaded model modes (csv_model, mat_model, netcdf_model).'
         )
+    )
+    parser.add_argument(
+        '--sweep-file', type=str, default=None,
+        help='Path to sweep .npz file (overrides the sweep_file in config)'
     )
     
     args = parser.parse_args()
@@ -1273,6 +1428,10 @@ Examples:
         config.gs_prior_mean_mm = args.gs_prior_mean_mm
     if args.gs_prior_std is not None:
         config.gs_prior_std = args.gs_prior_std
+    if args.phi_prior_type is not None:
+        config.phi_prior_type = args.phi_prior_type
+    if args.phi_onset_depth is not None:
+        config.phi_onset_depth_km = args.phi_onset_depth
     if args.output_dir is not None:
         config.output_dir = args.output_dir
     if args.no_plots:
@@ -1281,6 +1440,10 @@ Examples:
         config.force_plots = True
     if args.obs_types is not None:
         config.obs_types = args.obs_types
+    if args.vs_file is not None:
+        config.vs_file = args.vs_file
+    if args.q_file is not None:
+        config.q_file = args.q_file
     if args.anelastic_methods is not None:
         config.anelastic_methods = parse_anelastic_methods(args.anelastic_methods)
     if args.location_mode is not None:
@@ -1288,7 +1451,11 @@ Examples:
     if args.location_file is not None:
         config.location_file = args.location_file
     if args.seismic_model_file is not None:
-        config.seismic_model_file = args.seismic_model_file
+        # Backward compat: --seismic-model-file sets both vs_file and q_file
+        config.vs_file = args.seismic_model_file
+        config.q_file = args.seismic_model_file
+        if config.location_mode == 'manual':
+            config.location_mode = 'model'
     if args.model_z_range is not None:
         z_min, z_max = map(float, args.model_z_range.split(','))
         config.model_z_range = (z_min, z_max)
@@ -1304,6 +1471,8 @@ Examples:
         config.ml_csv_file = args.csv_file
     if args.parallel is not None:
         config.parallel_workers = args.parallel
+    if args.sweep_file is not None:
+        config.sweep_file = args.sweep_file
     
     # Run the inversion
     results = run_bayesian_inversion(config, working_dir=args.data_dir)

@@ -12,6 +12,7 @@ from typing import Dict, Any, Tuple, Optional, List
 from .probability import probability_distributions
 from .prior import make_param_grid, prep_gs_lognormal, prior_model_probs
 from .fitting import extract_ml_estimates
+from .prior import MeltFractionPrior
 
 
 # ---------------------------------------------------------------------------
@@ -46,9 +47,15 @@ def precompute_depth_averaged_sweep(
 def precompute_prior(
     sweep: Dict[str, Any],
     grain_size_prior,
+    zero_melt: bool = False,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Build the prior probability grid (same for every location).
+
+    Parameters
+    ----------
+    zero_melt : bool
+        If True, sharply suppress melt (phi peaked at 0).
 
     Returns (prior_statevars, params) without mutating sweep.
     """
@@ -68,6 +75,12 @@ def precompute_prior(
         params['gs_std'] = grain_size_prior.gs_std
     if grain_size_prior.gs_pdf_type is not None:
         params['gs_pdf_type'] = grain_size_prior.gs_pdf_type
+
+    # Apply zero-melt phi prior if requested
+    if zero_melt:
+        params['phi_pdf_type'] = 'normal'
+        params['phi_mean'] = 0.0
+        params['phi_std'] = 0.001
 
     gs_lognormal = False
     if params.get('gs_pdf_type') in ['lognormal', 'uniform_log']:
@@ -109,7 +122,7 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
         obs_q, sigma_q,
         depth_key,        # (z_min, z_max) tuple used to look up pre-averaged grids
         precomputed,      # dict with 'meanVs', 'meanQ', 'meanEta' for this depth_key
-        prior_statevars,  # 3-D prior array
+        prior_statevars,  # 3-D prior array (melt allowed)
         sweep_vectors,    # {'T': ..., 'phi': ..., 'gs': ..., 'state_names': ..., 'gs_params': ...}
         anelastic_method,
         save_ml_csv,
@@ -117,7 +130,15 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
         depth_val,        # actual depth value (or None)
         default_vs_error,
         default_q_error,
+        prior_no_melt,    # 3-D prior array with zero-melt (or None)
+        melt_onset_depth_km,  # onset depth for piecewise selection (or None)
     ) = args
+
+    # Select the appropriate prior based on depth
+    if prior_no_melt is not None and melt_onset_depth_km is not None:
+        loc_depth = depth_val if depth_val is not None else (z_min + z_max) / 2.0
+        if loc_depth >= melt_onset_depth_km:
+            prior_statevars = prior_no_melt
 
     try:
         # Honour the config-level obs_types flags (use_vs / use_q) so that
@@ -287,6 +308,7 @@ def run_locations_parallel(
     n_workers: int = 1,
     use_vs: bool = True,
     use_q: bool = True,
+    melt_fraction_prior: Optional[MeltFractionPrior] = None,
 ) -> List[Optional[Dict[str, Any]]]:
     """
     Process all locations for one anelastic method, optionally in parallel.
@@ -299,6 +321,8 @@ def run_locations_parallel(
         Whether Vs observations should be used.
     use_q : bool
         Whether Q observations should be used.
+    melt_fraction_prior : MeltFractionPrior, optional
+        Melt fraction prior configuration.
     """
     if not use_vs and not use_q:
         raise ValueError("At least one of use_vs or use_q must be True")
@@ -321,7 +345,30 @@ def run_locations_parallel(
     # ------------------------------------------------------------------
     # 2. Pre-compute the prior (same for all locations)
     # ------------------------------------------------------------------
-    prior_statevars, params = precompute_prior(sweep, grain_size_prior)
+    melt_type = 'uniform'
+    melt_onset_km = None
+    prior_no_melt = None
+
+    if melt_fraction_prior is not None:
+        melt_type = melt_fraction_prior.phi_prior_type
+
+    if melt_type == 'zero_melt':
+        # Suppress melt everywhere
+        prior_statevars, params = precompute_prior(
+            sweep, grain_size_prior, zero_melt=True,
+        )
+    elif melt_type == 'piecewise_depth':
+        # Need two priors: melt-allowed (above onset) and no-melt (below)
+        prior_statevars, params = precompute_prior(
+            sweep, grain_size_prior, zero_melt=False,
+        )
+        prior_no_melt, _ = precompute_prior(
+            sweep, grain_size_prior, zero_melt=True,
+        )
+        melt_onset_km = melt_fraction_prior.onset_depth_km
+    else:
+        # uniform or temperature_dependent (no-op for now)
+        prior_statevars, params = precompute_prior(sweep, grain_size_prior)
 
     sweep_vectors = {
         'T': sweep['T'].copy(),
@@ -374,6 +421,7 @@ def run_locations_parallel(
             anelastic_method, config.save_ml_csv,
             has_depth_col, depth_val,
             config.default_vs_error, config.default_q_error,
+            prior_no_melt, melt_onset_km,
         ))
 
     # ------------------------------------------------------------------

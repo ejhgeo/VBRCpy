@@ -55,7 +55,7 @@ sweep_generation:
     - xfit_mxw
     - xfit_premelt
 
-  output_file: validation_results/benchmarkTest_vsMatlab/sweep.npz
+  output_file: validation_tests/benchmarkTest_vsMatlab_newDataLoader/sweep.npz
 
   elastic:
     method: anharmonic

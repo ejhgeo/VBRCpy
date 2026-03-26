@@ -26,10 +26,16 @@ from .data_processing import (
     load_seismic_model_from_csv,
     load_seismic_model_from_mat,
     load_seismic_model_from_netcdf,
+    detect_file_type,
+    load_seismic_model_universal,
     Location,
     SeismicModelData,
 )
-from .fitting import fit_seismic_observations, fit_preloaded_observations
+from .fitting import (
+    fit_seismic_observations,
+    fit_preloaded_observations,
+)
+from .prior import GrainSizePrior, MeltFractionPrior
 from .plotting import generate_colors
 from .run_bayes import run_bayesian_inversion, InversionConfig
 
@@ -52,6 +58,8 @@ __all__ = [
     "load_seismic_model_from_csv",
     "load_seismic_model_from_mat",
     "load_seismic_model_from_netcdf",
+    "detect_file_type",
+    "load_seismic_model_universal",
     "generate_colors",
     # VBR sweep generation
     "VBR",

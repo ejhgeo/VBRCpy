@@ -12,7 +12,74 @@ Translated from MATLAB:
 
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
+from dataclasses import dataclass
 from .probability import probability_distributions
+
+
+@dataclass
+class GrainSizePrior:
+    """Configuration for grain size prior distribution."""
+    gs_pdf_type: str = 'uniform'  # 'uniform', 'uniform_log', 'lognormal'
+    gs_mean: Optional[float] = None  # in micrometers, for lognormal
+    gs_std: Optional[float] = None  # dimensionless, in log-space
+
+
+@dataclass
+class MeltFractionPrior:
+    """Configuration for melt fraction prior distribution.
+
+    phi_prior_type options:
+      - 'uniform'          : flat prior over sweep range (default / legacy)
+      - 'zero_melt'        : sharply peaked at φ=0 everywhere
+      - 'piecewise_depth'  : uniform above onset_depth_km, zero-melt below
+      - 'temperature_dependent' : placeholder for T-aware prior (future)
+    """
+    phi_prior_type: str = 'uniform'
+    # For piecewise_depth: depth (km) below which melt is suppressed
+    onset_depth_km: float = 80.0
+    # Internal: std dev for the zero-melt normal prior (small ≈ delta at 0)
+    _zero_melt_std: float = 0.001
+
+
+def apply_melt_fraction_prior(
+    params: Dict[str, Any],
+    melt_prior: MeltFractionPrior,
+    depth_km: Optional[float] = None,
+) -> None:
+    """Set phi prior fields in *params* based on the melt-fraction prior config.
+
+    For depth-dependent types the caller must supply *depth_km* (midpoint of
+    the depth range or the single observation depth).
+    """
+    ptype = melt_prior.phi_prior_type
+
+    if ptype == 'uniform':
+        # No-op: prior_model_probs already defaults to uniform for phi
+        return
+
+    if ptype == 'zero_melt':
+        params['phi_pdf_type'] = 'normal'
+        params['phi_mean'] = 0.0
+        params['phi_std'] = melt_prior._zero_melt_std
+        return
+
+    if ptype == 'piecewise_depth':
+        if depth_km is not None and depth_km < melt_prior.onset_depth_km:
+            # Shallow — melt is plausible → uniform (no-op)
+            return
+        else:
+            # Deep or unknown — suppress melt
+            params['phi_pdf_type'] = 'normal'
+            params['phi_mean'] = 0.0
+            params['phi_std'] = melt_prior._zero_melt_std
+            return
+
+    if ptype == 'temperature_dependent':
+        # Placeholder — behaves as uniform until we iterate on the design
+        return
+
+    # Unknown type — warn and fall back to uniform
+    print(f"Warning: unknown phi_prior_type '{ptype}', using uniform")
 
 
 def make_param_grid(

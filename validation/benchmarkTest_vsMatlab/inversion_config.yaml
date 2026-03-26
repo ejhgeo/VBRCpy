@@ -55,7 +55,8 @@ location_colors:
 vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
 q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
 lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
-sweep_file: validation_results/benchmarkTest_vsMatlab/sweep.npz
+
+sweep_file: validation_tests/benchmarkTest_vsMatlab_newDataLoader/sweep.npz
 
 # Inversion settings — all 4 methods
 anelastic_methods:
@@ -68,8 +69,8 @@ gs_prior_type: log_uniform
 obs_types: VsQ
 
 # Output
-output_dir: validation_results/benchmarkTest_vsMatlab/inversion_results
+output_dir: validation_tests/benchmarkTest_vsMatlab_newDataLoader/inversion_results
 save_plots: true
 force_plots: true
 save_ml_csv: true
-ml_csv_file: validation_results/benchmarkTest_vsMatlab/inversion_results/ml_estimates.csv
+ml_csv_file: validation_tests/benchmarkTest_vsMatlab_newDataLoader/inversion_results/ml_estimates.csv

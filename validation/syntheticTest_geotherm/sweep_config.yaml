@@ -37,7 +37,7 @@ sweep_generation:
     - xfit_premelt
 
   # Output directory — sweep.npz and lut_plots/ are placed here automatically
-  output_dir: validation_tests/syntheticTest_geotherm_cammarano2003_xfitpremelt/
+  output_dir: validation_tests/syntheticTest_geotherm_newDataLoader/
 
   elastic:
     method: cammarano2003

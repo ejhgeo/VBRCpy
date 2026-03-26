@@ -105,10 +105,11 @@ sweep_generation:
   # Options:
   #   'constant'  - uniform density at all depths (default)
   #   'prem'      - depth-dependent density from PREM (Dziewonski & Anderson, 1981)
-  #   'custom'    - user-supplied CSV with columns: depth_km, density (kg/m³)
+  #   'stw105'    - depth-dependent density from STW105 (Kustowski et al., 2008)
+  #   'custom'    - user-supplied file with columns: radius depth density Vs Qmu
   density_model: prem
   rho: 3300.0              # kg/m^3 (used only when density_model is 'constant')
-  # density_file: /path/to/custom_density.csv  # required when density_model is 'custom'
+  # density_file: /path/to/custom_model.txt  # required when density_model is 'custom'
 
   # --------------------------------------------------------------------------
   # Other parameters (optional)

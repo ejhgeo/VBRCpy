@@ -19,11 +19,8 @@ import time
 import os
 
 from .core import VBR, StateVariables
-from .thermal import calculate_solidus_K
+from .thermal import calculate_solidus_K, _load_earth_model
 from .params import C2K
-
-# Earth radius in meters (for PREM radius→depth conversion)
-R_EARTH_M = 6_371_000.0
 
 
 def load_density_profile(model: str = 'prem',
@@ -36,11 +33,11 @@ def load_density_profile(model: str = 'prem',
     model : str
         Density model to use:
         - ``'prem'``: built-in PREM reference model (Dziewonski & Anderson, 1981)
-        - ``'custom'``: user-supplied CSV file
+        - ``'stw105'``: built-in STW105 reference model (Kustowski et al., 2008)
+        - ``'custom'``: user-supplied file (same 5-column whitespace-delimited
+          format as built-in models: ``radius depth density Vs Qmu``)
     filepath : str, optional
-        Path to a custom density CSV.  Required when *model* is ``'custom'``.
-        The file must contain at least two columns named ``depth_km`` and
-        ``density`` (kg/m³), with one header row.
+        Path to a custom file.  Required when *model* is ``'custom'``.
 
     Returns
     -------
@@ -48,42 +45,10 @@ def load_density_profile(model: str = 'prem',
         Interpolation function mapping depth in **meters** to density in
         kg/m³.  Extrapolates linearly outside the data range.
     """
-    if model == 'prem':
-        prem_file = Path(__file__).parent / 'PREM_for_VBRc.csv'
-        data = np.genfromtxt(prem_file, delimiter=',', skip_header=1)
-        radius_m = data[:, 0]
-        density = data[:, 1]  # kg/m³
-        depth_m = R_EARTH_M - radius_m
-
-        # Sort ascending by depth
-        sort_idx = np.argsort(depth_m)
-        depth_m = depth_m[sort_idx]
-        density = density[sort_idx]
-
-        # Average duplicate depths (PREM has two entries at discontinuities)
-        unique_depths, inv = np.unique(depth_m, return_inverse=True)
-        unique_density = np.zeros(len(unique_depths))
-        for i in range(len(unique_depths)):
-            unique_density[i] = np.mean(density[inv == i])
-
-        return interp1d(unique_depths, unique_density,
-                        kind='linear', fill_value='extrapolate',
-                        bounds_error=False)
-
-    elif model == 'custom':
-        if filepath is None:
-            raise ValueError("filepath is required when model='custom'")
-        data = np.genfromtxt(filepath, delimiter=',', names=True)
-        depth_m = data['depth_km'] * 1e3
-        density = data['density']
-        sort_idx = np.argsort(depth_m)
-        return interp1d(depth_m[sort_idx], density[sort_idx],
-                        kind='linear', fill_value='extrapolate',
-                        bounds_error=False)
-
-    else:
-        raise ValueError(f"Unknown density model '{model}'. "
-                         "Use 'prem' or 'custom'.")
+    depth_m, density = _load_earth_model(model, custom_file=filepath)
+    return interp1d(depth_m, density,
+                    kind='linear', fill_value='extrapolate',
+                    bounds_error=False)
 
 
 @dataclass
@@ -115,10 +80,12 @@ class SweepParams:
         Density in kg/m^3 used when density_model='constant' (default: 3300)
     density_model : str
         Density model: 'constant' (uniform rho), 'prem' (depth-dependent PREM),
-        or 'custom' (user-provided CSV). Default: 'constant'.
+        'stw105' (depth-dependent STW105), or 'custom' (user-provided file).
+        Default: 'constant'.
     density_file : str or None
-        Path to custom density CSV (required when density_model='custom').
-        File must have columns ``depth_km`` and ``density`` (kg/m³).
+        Path to custom density file (required when density_model='custom').
+        Must use the same 5-column whitespace-delimited format as the
+        bundled models (``radius depth density Vs Qmu``).
     sig_MPa : float
         Differential stress in MPa (default: 0.1)
     Ch2o : float
@@ -165,7 +132,7 @@ class SweepParams:
     freq_log_min: float = -2.2  # log10(f_min)
     freq_log_max: float = -1.3  # log10(f_max)
     rho: float = 3300.0
-    density_model: str = 'constant'  # 'constant', 'prem', or 'custom'
+    density_model: str = 'constant'  # 'constant', 'prem', 'stw105', or 'custom'
     density_file: Optional[str] = None  # path to custom density CSV
     sig_MPa: float = 0.1
     Ch2o: float = 0.0

@@ -34,30 +34,35 @@ import yaml
 EXAMPLE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(EXAMPLE_DIR, '..', '..', '..'))
 
-SWEEP_CONFIG = os.path.join(EXAMPLE_DIR, 'sweep_config.yaml')
-INVERSION_CONFIG = os.path.join(EXAMPLE_DIR, 'inversion_config.yaml')
+CONFIG_FILE = os.path.join(EXAMPLE_DIR, 'config.yaml')
 GEOTHERM_CSV = os.path.join(EXAMPLE_DIR, 'SC2006_geotherm.csv')
 
-# Derive OUTPUT_DIR from the inversion config's output_dir field so the
-# user only needs to set it once in the YAML.
-with open(INVERSION_CONFIG, 'r') as _f:
-    _inv_cfg = yaml.safe_load(_f)
-_inv_output_dir = _inv_cfg.get('output_dir', 'validation_tests/syntheticTest_geotherm/inversion_results')
-OUTPUT_DIR = os.path.join(REPO_ROOT, os.path.dirname(_inv_output_dir))
+# All output paths derive from the single output_dir in config.yaml.
+with open(CONFIG_FILE, 'r') as _f:
+    _cfg = yaml.safe_load(_f)
+_output_dir_rel = _cfg.get('output_dir', 'validation_tests/syntheticTest_geotherm')
+OUTPUT_DIR = os.path.join(REPO_ROOT, _output_dir_rel)
 
-SWEEP_FILE = os.path.join(OUTPUT_DIR, 'sweep.npz')
+SWEEP_FILE       = os.path.join(OUTPUT_DIR, 'sweep.npz')
 SWEEP_FINGERPRINT = os.path.join(OUTPUT_DIR, 'sweep_fingerprint.json')
-SYNTH_CSV = os.path.join(OUTPUT_DIR, 'synthetic_observations.csv')
-INVERSION_DIR = os.path.join(REPO_ROOT, _inv_output_dir)
+SYNTH_CSV        = os.path.join(OUTPUT_DIR, 'synthetic_observations.csv')
+INVERSION_DIR    = os.path.join(OUTPUT_DIR, 'inversion_results')
 
 
 # ===================================================================
 # Sweep config fingerprinting
 # ===================================================================
 def _config_fingerprint(config_path):
-    """SHA-256 hash of the sweep config file contents."""
-    with open(config_path, 'rb') as f:
-        return hashlib.sha256(f.read()).hexdigest()
+    """SHA-256 hash of only the sweep_generation section of the config.
+
+    Ignores inversion-only parameters so that changing priors or output
+    settings does not trigger unnecessary sweep regeneration.
+    """
+    import json as _json
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+    section = cfg.get('sweep_generation', {})
+    return hashlib.sha256(_json.dumps(section, sort_keys=True).encode()).hexdigest()
 
 
 def _sweep_needs_regeneration():
@@ -66,7 +71,7 @@ def _sweep_needs_regeneration():
         return True
     if not os.path.isfile(SWEEP_FINGERPRINT):
         return True
-    current = _config_fingerprint(SWEEP_CONFIG)
+    current = _config_fingerprint(CONFIG_FILE)
     with open(SWEEP_FINGERPRINT, 'r') as f:
         saved = json.load(f).get('hash')
     return current != saved
@@ -74,9 +79,9 @@ def _sweep_needs_regeneration():
 
 def _save_sweep_fingerprint():
     """Write the current config hash next to the sweep file."""
-    fp = _config_fingerprint(SWEEP_CONFIG)
+    fp = _config_fingerprint(CONFIG_FILE)
     with open(SWEEP_FINGERPRINT, 'w') as f:
-        json.dump({'hash': fp, 'config': SWEEP_CONFIG}, f)
+        json.dump({'hash': fp, 'config': CONFIG_FILE}, f)
 
 
 # ===================================================================
@@ -142,7 +147,8 @@ def _generate_synthetic_csv(sweep_file, csv_out, geotherm_z, geotherm_T_vals,
     rho = sweep['rho']
     density_model = sweep.get('density_model', 'constant')
 
-    sweep_params = load_sweep_params_from_yaml(SWEEP_CONFIG)
+    sweep_params = load_sweep_params_from_yaml(CONFIG_FILE)
+    sweep_params.output_file = SWEEP_FILE
     f = np.logspace(sweep_params.freq_log_min, sweep_params.freq_log_max,
                     sweep_params.n_freq)
 
@@ -265,7 +271,8 @@ def _make_comparison_plots(z_km, T_true, phi_true, gs_true, Vs_syn, Q_syn,
     from vbrc_V2Tpy.bayesian_fitting_py.vbr.thermal import calculate_solidus_K
     from vbrc_V2Tpy.bayesian_fitting_py.vbr.params import C2K
     from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import load_sweep_params_from_yaml
-    sweep_params = load_sweep_params_from_yaml(SWEEP_CONFIG)
+    sweep_params = load_sweep_params_from_yaml(CONFIG_FILE)
+    sweep_params.output_file = SWEEP_FILE
     sweep_z_km = sweep['z'] / 1e3
     solidus_K = calculate_solidus_K(
         sweep['P_GPa'],
@@ -436,14 +443,14 @@ def _make_comparison_plots(z_km, T_true, phi_true, gs_true, Vs_syn, Q_syn,
     fig.tight_layout()
 
     # Build a descriptive prior label for the filename
-    gs_type = _inv_cfg.get('gs_prior_type', 'log_uniform')
+    gs_type = _cfg.get('gs_prior_type', 'log_uniform')
     if gs_type == 'log_normal':
-        mean_mm = _inv_cfg.get('gs_prior_mean_mm', '?')
-        std = _inv_cfg.get('gs_prior_std', 0.25)
+        mean_mm = _cfg.get('gs_prior_mean_mm', '?')
+        std = _cfg.get('gs_prior_std', 0.25)
         prior_label = f'gsLN_{mean_mm}mm_std{std}'
     else:
         prior_label = 'gsLogUniform'
-    obs = _inv_cfg.get('obs_types', 'VsQ')
+    obs = _cfg.get('obs_types', 'VsQ')
     fig_path = os.path.join(OUTPUT_DIR, f'inversion_results_{method}_{prior_label}_{obs}.png')
     fig.savefig(fig_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -463,7 +470,10 @@ def _replot_lut():
     print(f"Loading sweep from {SWEEP_FILE} ...")
     sweep = load_sweep_data(SWEEP_FILE)
 
-    sweep_params = load_sweep_params_from_yaml(SWEEP_CONFIG)
+    sweep_params = load_sweep_params_from_yaml(CONFIG_FILE)
+    sweep_params.output_file = SWEEP_FILE
+    if sweep_params.plot_lut:
+        sweep_params.plot_lut_dir = os.path.join(OUTPUT_DIR, 'lut_plots')
     plot_dir = sweep_params.plot_lut_dir
     every_n = sweep_params.plot_lut_every_n
 
@@ -507,13 +517,22 @@ def main():
     if _sweep_needs_regeneration():
         if os.path.isfile(SWEEP_FILE):
             print("  Sweep config changed — regenerating ...")
-        cmd = [
-            python, '-m',
-            'vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep',
-            '--config', SWEEP_CONFIG,
-        ]
-        print(f"  Running: {' '.join(cmd)}\n", flush=True)
-        subprocess.run(cmd, check=True)
+        from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import (
+            load_sweep_params_from_yaml as _lspy,
+            generate_parameter_sweep as _gps,
+            save_sweep as _ss,
+        )
+        _params = _lspy(CONFIG_FILE)
+        _params.output_file = SWEEP_FILE
+        if _params.plot_lut:
+            _params.plot_lut_dir = os.path.join(OUTPUT_DIR, 'lut_plots')
+        _sweep = _gps(_params)
+        _ss(_sweep, _params.output_file)
+        if _params.plot_lut:
+            from vbrc_V2Tpy.bayesian_fitting_py.vbr.plot_lut import generate_sweep_lut_plots
+            print(f"\nGenerating LUT plots (every {_params.plot_lut_every_n} depths)...")
+            generate_sweep_lut_plots(_sweep, _params.plot_lut_dir,
+                                     every_n=_params.plot_lut_every_n)
         _save_sweep_fingerprint()
     else:
         print(f"  Sweep up-to-date at {SWEEP_FILE} — skipping generation.")
@@ -538,7 +557,12 @@ def main():
     cmd = [
         python, '-m',
         'vbrc_V2Tpy.bayesian_fitting_py',
-        '--config', INVERSION_CONFIG, '--parallel', '16',
+        '--config', CONFIG_FILE,
+        '--vs-file', SYNTH_CSV,
+        '--q-file', SYNTH_CSV,
+        '--sweep-file', SWEEP_FILE,
+        '--output-dir', INVERSION_DIR,
+        '--parallel', '16',
     ]
     print(f"  Running: {' '.join(cmd)}\n", flush=True)
     subprocess.run(cmd, check=True)

@@ -1,6 +1,6 @@
 # vbrc_V2Tpy — Project State Document
 
-> **Last updated:** 2026-03-24
+> **Last updated:** 2026-03-25
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
 > **Latest commit:** `8a93465` — "Fix MATLAB struct indexing bug, rename compare_lut_slices, cleanup"
 > **Uncommitted changes:** Yes — see §6 "Recent Uncommitted Changes"
@@ -42,14 +42,12 @@ vbrc_V2Tpy/
 │   │   ├── README.md           # usage, assumptions, output description
 │   │   ├── __init__.py / __main__.py
 │   │   ├── run_example.py     # 4-step orchestrator with --gs-um and --replot-lut
-│   │   ├── sweep_config.yaml  # Cammarano 2003, PREM, YK2001, xfit_premelt, 131 depths
-│   │   ├── inversion_config.yaml  # csv_model, VsQ, percent Q error, log-normal gs prior
+│   │   ├── config.yaml        # combined sweep + inversion config (single file)
 │   │   └── SC2006_geotherm.csv  # prescribed geotherm (120 pts, 0–3000 km)
 │   └── benchmarkTest_vsMatlab/  # Python vs MATLAB VBRc benchmark
 │       ├── __init__.py / __main__.py
 │       ├── run_benchmark.py   # 4-step orchestrator (sweep→compare→LUT plots→inversion)
-│       ├── sweep_config.yaml  # matches original MATLAB sweep params
-│       └── inversion_config.yaml  # manual locations, all 4 methods
+│       └── config.yaml        # combined sweep + inversion config (single file)
 └── bayesian_fitting_py/               # main package
     ├── __init__.py / __main__.py
     ├── run_bayes.py          # CLI entry point + InversionConfig + main loop
@@ -114,10 +112,8 @@ python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
 | `test_eta_config.yaml` | 2 manual locations, 2 methods, for quick viscosity testing |
 | `test_parallel_config.yaml` | NetCDF model subsampled 100×, 1 method, for parallel testing |
 | `sweep_config.yaml` | Config for regenerating the parameter sweep |
-| `validation/syntheticTest_geotherm/sweep_config.yaml` | Sweep for geotherm validation: 131 depths, Cammarano 2003, PREM density, YK2001 solidus, YT2024 |
-| `validation/syntheticTest_geotherm/inversion_config.yaml` | Inversion for geotherm: csv_model, xfit_premelt, VsQ, percent Q error, log-normal gs prior |
-| `validation/benchmarkTest_vsMatlab/sweep_config.yaml` | Sweep matching original MATLAB VBRc params (T:1100–1800, 100 depths) |
-| `validation/benchmarkTest_vsMatlab/inversion_config.yaml` | Inversion: 3 manual locations, all 4 methods, VsQ |
+| `validation/syntheticTest_geotherm/config.yaml` | Combined sweep + inversion config for geotherm validation (single file) |
+| `validation/benchmarkTest_vsMatlab/config.yaml` | Combined sweep + inversion config for MATLAB benchmark (single file) |
 
 ### Sweep file
 
@@ -141,7 +137,77 @@ All four methods verified against MATLAB output to floating-point precision:
 
 ## 6. Key Features Implemented
 
-### Recent Uncommitted Changes (2026-03-24)
+### Recent Uncommitted Changes (2026-03-25)
+
+#### Unified Config Files & Single `output_dir`
+- **Config consolidation:** Merged separate `sweep_config.yaml` and
+  `inversion_config.yaml` into a single `config.yaml` for both validation cases
+  (geotherm and benchmark). Sweep parameters are nested under a
+  `sweep_generation:` section; inversion parameters remain at the top level.
+- **Single `output_dir`:** One top-level `output_dir` key in the combined YAML
+  controls all output paths. The runner scripts (`run_example.py`,
+  `run_benchmark.py`) derive sweep, LUT, synthetic obs, and inversion output
+  paths automatically from this single directory.
+- Old `sweep_config.yaml` and `inversion_config.yaml` still exist but are
+  no longer used; can be deleted.
+
+#### `InversionConfig` Unknown-Key Filtering
+- `InversionConfig.from_dict()` now filters unknown keys before constructing
+  the dataclass, using `fields as _dc_fields` from `dataclasses`. This allows
+  the combined config (which includes the `sweep_generation` section) to be
+  loaded by `run_bayes.py` without errors.
+
+#### New CLI Arguments for `run_bayes.py`
+- **`--sweep-file`**: Override the sweep file path from the command line.
+  Used by runner scripts to point inversion at the correct sweep.npz.
+- **`--vs-file` / `--q-file`**: Override seismic data file paths from CLI.
+  Used by geotherm runner to pass synthetic observation CSV to the inversion.
+
+#### Unified Data Input (`vs_file` / `q_file`)
+- Replaced `seismic_model_file` and separate `vel_model`/`q_model` fields with
+  two universal fields: `vs_file` and `q_file`. These accept any supported
+  format (.mat, .csv, .nc) or built-in model names, auto-detected by extension.
+- Backward compatible: old configs with `seismic_model_file` are automatically
+  mapped to `vs_file`/`q_file` in `from_dict()`.
+- Three old `location_mode` values (`csv_model`, `mat_model`, `netcdf_model`)
+  consolidated into a single `model` mode with format auto-detection.
+
+#### PREM Density Discontinuity Fix (`thermal.py`)
+- **Fixed:** `_load_earth_model()` now handles duplicate depths at
+  discontinuities (e.g., 410/410 km in PREM) using an epsilon-offset approach
+  (100 m shift for later duplicates) instead of silently averaging the two
+  density values. This preserves the density jump across discontinuities for
+  correct lithostatic pressure integration.
+
+#### Runner Script Improvements
+- Sweep generation is now called **programmatically** (imported
+  `generate_parameter_sweep()` and `save_sweep()`) instead of spawning a
+  subprocess. Eliminates shell overhead and simplifies error handling.
+- **Config fingerprinting** changed from hashing the entire config file to
+  hashing only the `sweep_generation` section (via `json.dumps(section,
+  sort_keys=True)` → SHA-256). This means changes to inversion-only
+  parameters no longer force unnecessary sweep regeneration.
+- Inversion is still run as a subprocess, passing `--config`, `--sweep-file`,
+  `--output-dir`, and (for geotherm) `--vs-file`, `--q-file`, `--parallel`.
+
+#### Bug Fixes (2026-03-25)
+- **`obs` UnboundLocalError:** In `run_example.py`, `obs = _cfg.get('obs_types',
+  'VsQ')` was scoped inside an `else` block; moved to correct indentation so
+  it's always defined.
+- **`--sweep-file` not applied for benchmark:** The `args.sweep_file` CLI
+  override in `run_bayes.py` was incorrectly nested inside `if args.parallel
+  is not None:`, so it only took effect when `--parallel` was also passed.
+  De-indented to top level so it applies unconditionally.
+
+#### Benchmark Verification (2026-03-25)
+- After all fixes, benchmark inversion results verified against the old
+  reference (`gsLogUniform_ensembles.pkl`). **All primary inversion variables
+  (T, φ, gs, p_joint posteriors) are identical within floating-point
+  tolerance (~1e-13).** The only differences are in `xfit_premelt` `log10_eta`
+  and `predicted_eta`, which are expected due to the viscosity model consistency
+  fix (xfit_premelt now uses its own viscosity instead of HK2003).
+
+### Previous Uncommitted Changes (2026-03-24)
 
 #### Synthetic Geotherm Validation Test (`syntheticTest_geotherm`)
 - **New validation case:** `validation/syntheticTest_geotherm/` uses the SC2006
@@ -335,8 +401,9 @@ All four methods verified against MATLAB output to floating-point precision:
 - CLI accepts any of these formats as input
 
 ### Viscosity Output (commit `21cb561`)
-- `generate_sweep.py` stores `meanEta` in the Box — HK2003 composite `eta_total`
-  (same for all anelastic methods; depends only on T, P, φ, gs)
+- `generate_sweep.py` stores `meanEta` in the Box — method-consistent viscosity:
+  xfit_premelt's own diffusion creep η when that method is selected, HK2003
+  `eta_total` as fallback for other methods
 - `extract_ml_estimates` computes the full posterior marginal PDF for log₁₀(η)
   using binning, returning `{ml, mean, std}` in log₁₀ Pa·s
 - CSV output includes `log10_eta_ml`, `log10_eta_std`, `log10_eta_mean`
@@ -356,11 +423,11 @@ All four methods verified against MATLAB output to floating-point precision:
   replaced a triple-nested Python loop with `np.mean(data[:,:,:,z_inds], axis=3)`
 
 ### Location Modes
-- `manual`: locations from YAML, seismic data from .mat files
-- `locations_file`: locations from CSV, seismic from .mat files
-- `csv_model`: locations + Vs/Q from a single CSV
-- `mat_model`: locations + Vs/Q from a .mat file
-- `netcdf_model`: locations + Vs/Q from a NetCDF file (xarray)
+- `manual`: locations from YAML, seismic data from `vs_file`/`q_file`
+- `locations_file`: locations from CSV, seismic from `vs_file`/`q_file`
+- `model`: locations AND seismic data from `vs_file` (format auto-detected:
+  .mat, .csv, .nc). Replaces the old `csv_model`, `mat_model`, `netcdf_model`
+  modes (those still work as aliases for backward compatibility).
 
 ### CSV Output
 Every location × method produces a row with:
@@ -372,9 +439,13 @@ Vs_chi2, Q_obs, Q_pred, Q_misfit, Q_chi2, chi2_total`
 ## 7. Architecture Notes
 
 ### Data Flow
-1. **Config** (YAML) → `InversionConfig` dataclass
-2. **Locations** prepared via `prepare_locations()` → list of (lat,lon), names, z_ranges, SeismicModelData
-3. **Sweep** loaded once (`.npz` or `.mat`)
+1. **Config** (YAML) → `InversionConfig` dataclass (unknown keys like
+   `sweep_generation` are silently filtered)
+2. **Locations** prepared via `prepare_locations()` → list of (lat,lon), names,
+   z_ranges, SeismicModelData. Data loaded from `vs_file`/`q_file` (format
+   auto-detected).
+3. **Sweep** loaded once (`.npz` or `.mat`); path set via `sweep_file` config
+   field or `--sweep-file` CLI override
 4. **Per method × per location:** compute likelihood → posterior → ML estimates
 5. **Ensemble** accumulated across methods per location
 6. **Output:** CSV + optional plots

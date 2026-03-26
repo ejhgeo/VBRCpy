@@ -8,13 +8,15 @@
 
 # Use csv_model mode — the synthetic Vs file acts as the "observed" data
 location_mode: csv_model
-seismic_model_file: validation_tests/syntheticTest_geotherm_cammarano2003_xfitpremelt/synthetic_observations.csv
+# vs_file: validation_tests/syntheticTest_geotherm_newDataLoader/synthetic_observations.csv
+# q_file: validation_tests/syntheticTest_geotherm_newDataLoader/synthetic_observations.csv
+seismic_model_file: validation_tests/syntheticTest_geotherm_newDataLoader/synthetic_observations.csv
 default_vs_error: 0.05
 default_q_error: 12.0
 q_error_mode: percent   # Q error as a percent of observed Q
 
 # Point to the sweep we just generated
-sweep_file: validation_tests/syntheticTest_geotherm_cammarano2003_xfitpremelt/sweep.npz
+sweep_file: validation_tests/syntheticTest_geotherm_newDataLoader/sweep.npz
 
 # Inversion settings
 anelastic_methods:
@@ -23,10 +25,14 @@ anelastic_methods:
 gs_prior_type: log_normal
 gs_prior_mean_mm: 0.8
 gs_prior_std: 0.25
+
+phi_prior_type: piecewise_depth
+phi_onset_depth_km: 80.0
+
 obs_types: VsQ
 
 # Output — ml_csv_file is auto-derived as {output_dir}/ml_estimates.csv
-output_dir: validation_tests/syntheticTest_geotherm_cammarano2003_xfitpremelt/inversion_results
+output_dir: validation_tests/syntheticTest_geotherm_newDataLoader/inversion_results
 save_plots: true
 force_plots: true
 plot_every_n: 13  # plot every N-th location (1 = all)

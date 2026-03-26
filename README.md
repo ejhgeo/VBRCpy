@@ -64,14 +64,16 @@ python -m bayesian_fitting_py --list-methods
 ## Features
 
 - **Bayesian inversion** of Vs and/or Q at arbitrary locations and depth ranges
-- **Viscosity estimation**: full posterior for log₁₀(η) using HK2003 composite rheology
+- **Viscosity estimation**: full posterior for log₁₀(η) using method-consistent
+  rheology (xfit_premelt uses its own viscosity; other methods use HK2003)
 - **Four anelastic methods**: andrade_psp, eburgers_psp, xfit_premelt, xfit_mxw
 - **YT2016 / YT2024 melt mode**: configurable direct melt effects on anelasticity
   via `include_direct_melt_effect` in sweep config
 - **Two elastic backends**: `anharmonic` (linear Taylor, olivine) and
   `cammarano2003` (finite-strain mineral physics with depth-dependent mineralogy)
 - **Parallel processing**: multiprocessing support for large-scale tomography runs
-- **Multiple input modes**: manual locations, CSV, MAT, NetCDF seismic models
+- **Flexible input**: manual locations, or `model` mode with auto-detected format
+  (.csv, .mat, .nc) via `vs_file` / `q_file`
 - **Pure-Python VBR calculator** — generate parameter sweeps without MATLAB
 - **MATLAB benchmark validation** — automated comparison against original VBRc output
 - **Publication-quality plots** with posterior PDFs, T–φ trade-offs, and ensemble summaries
@@ -108,8 +110,8 @@ See [bayesian_fitting_py/README.md](bayesian_fitting_py/README.md) for full
 documentation including:
 
 - Detailed usage and CLI options
-- All five location modes (manual, locations_file, csv_model, mat_model, netcdf_model)
-- YAML / JSON configuration reference
+- Location modes (`manual`, `locations_file`, `model`) and input formats
+- YAML configuration reference
 - VBR calculator API and sweep generation
 - Available methods and solidus calculations
 

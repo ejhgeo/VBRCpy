@@ -1524,3 +1524,92 @@ def _find_var(ds, candidates: List[str]) -> Optional[str]:
         if name in ds.data_vars:
             return name
     return None
+
+
+# Built-in 1D Earth model names recognised by detect_file_type()
+BUILTIN_EARTH_MODELS = ('prem', 'stw105')
+
+
+def detect_file_type(filepath: str) -> str:
+    """Auto-detect the seismic data file type from its path or name.
+
+    Parameters
+    ----------
+    filepath : str
+        A file path, or one of the built-in model names
+        (``'prem'``, ``'stw105'``).
+
+    Returns
+    -------
+    str
+        One of ``'mat'``, ``'csv'``, ``'netcdf'``, or ``'earth_model'``.
+    """
+    from pathlib import Path as _Path
+
+    if filepath.lower().strip() in BUILTIN_EARTH_MODELS:
+        return 'earth_model'
+    ext = _Path(filepath).suffix.lower()
+    if ext == '.mat':
+        return 'mat'
+    elif ext in ('.csv', '.txt', '.tsv', '.dat'):
+        return 'csv'
+    elif ext in ('.nc', '.nc4', '.netcdf'):
+        return 'netcdf'
+    else:
+        raise ValueError(
+            f"Cannot determine file type for '{filepath}'. "
+            "Use .mat, .csv, .nc, or a built-in model name (prem, stw105)."
+        )
+
+
+def load_seismic_model_universal(
+    filepath: str,
+    z_range: Optional[Tuple[float, float]] = None,
+    subsample: int = 1,
+    default_vs_error: float = 0.05,
+    default_q_error: float = 10.0,
+    q_error_mode: str = 'absolute',
+) -> SeismicModelData:
+    """Load a seismic model from any supported file format.
+
+    The file type is auto-detected from the extension:
+    ``.mat`` → :func:`load_seismic_model_from_mat`,
+    ``.csv``/``.txt`` → :func:`load_seismic_model_from_csv`,
+    ``.nc`` → :func:`load_seismic_model_from_netcdf`.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the seismic model file.
+    z_range, subsample, default_vs_error, default_q_error, q_error_mode
+        Passed through to the format-specific loader.
+
+    Returns
+    -------
+    SeismicModelData
+    """
+    ftype = detect_file_type(filepath)
+    if ftype == 'mat':
+        return load_seismic_model_from_mat(
+            filepath, default_vs_error=default_vs_error,
+            default_q_error=default_q_error, z_range=z_range,
+            subsample=subsample, q_error_mode=q_error_mode,
+        )
+    elif ftype == 'csv':
+        return load_seismic_model_from_csv(
+            filepath, default_vs_error=default_vs_error,
+            default_q_error=default_q_error, z_range=z_range,
+            subsample=subsample, q_error_mode=q_error_mode,
+        )
+    elif ftype == 'netcdf':
+        return load_seismic_model_from_netcdf(
+            filepath, default_vs_error=default_vs_error,
+            default_q_error=default_q_error, z_range=z_range,
+            subsample=subsample, q_error_mode=q_error_mode,
+        )
+    else:
+        raise ValueError(
+            f"'{filepath}' is a built-in Earth model name. "
+            "It can only provide 1D Vs/Q profiles, not full seismic model grids. "
+            "Use a .mat, .csv, or .nc file, or switch to 'manual' / 'locations_file' mode."
+        )

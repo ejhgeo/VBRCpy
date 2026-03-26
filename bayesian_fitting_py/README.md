@@ -106,7 +106,7 @@ python -m bayesian_fitting_py --list-methods
 
 ## Location Modes
 
-The package supports five ways to specify locations for inversion:
+The package supports three ways to specify locations for inversion:
 
 ### 1. Manual Mode (default)
 
@@ -125,9 +125,12 @@ z_ranges:
   - [120, 150]
 ```
 
+Seismic data is loaded from the files specified by `vs_file` and `q_file`.
+
 ### 2. Locations File Mode
 
-Load locations from a CSV or text file (seismic data still loaded from separate .mat files):
+Load locations from a CSV or text file (seismic data still loaded from
+`vs_file`/`q_file`):
 
 ```bash
 python -m bayesian_fitting_py --location-mode locations_file --location-file locations.csv
@@ -142,12 +145,23 @@ File format (CSV or whitespace-separated):
 
 The `name` column is optional - if omitted, points are named `point_0`, `point_1`, etc.
 
-### 3. CSV Model Mode
+### 3. Model Mode
 
-Load both locations AND seismic observations from a single CSV file:
+Load both locations AND seismic observations from a single file.
+The file format is **auto-detected** from the extension (.csv, .mat, .nc):
 
 ```bash
-python -m bayesian_fitting_py --location-mode csv_model --seismic-model-file model.csv
+# CSV model
+python -m bayesian_fitting_py --location-mode model --vs-file model.csv
+
+# MAT model
+python -m bayesian_fitting_py --location-mode model --vs-file model.mat
+
+# NetCDF model (requires xarray)
+python -m bayesian_fitting_py --location-mode model --vs-file model.nc
+
+# Separate Vs and Q files
+python -m bayesian_fitting_py --location-mode model --vs-file vs_model.csv --q-file q_model.csv
 ```
 
 CSV format:
@@ -157,39 +171,24 @@ lon,lat,depth,Vs,Q,Vs_error,Q_error
 -117.5,40.7,150,4.3,90,0.05,10
 ```
 
-Columns can be named: lon/longitude, lat/latitude, depth/z/z_km, Vs/vs, Q/q, Vs_error, Q_error. Error columns are optional - defaults are used if missing.
+Columns can be named: lon/longitude, lat/latitude, depth/z/z_km, Vs/vs, Q/q,
+Vs_error, Q_error. Error columns are optional — defaults are used if missing.
 
-### 4. MAT Model Mode
+For backward compatibility, the old mode names (`csv_model`, `mat_model`,
+`netcdf_model`) and `--seismic-model-file` flag still work but map to `model`
+mode internally.
 
-Load locations and seismic observations from a .mat file, using the exact depths in the file for inversion:
-
-```bash
-python -m bayesian_fitting_py --location-mode mat_model --seismic-model-file model.mat
-```
-
-The .mat file should contain: Lat, Lon, Depth, and Vs (and optionally Q, Error).
-
-### 5. NetCDF Model Mode
-
-Load locations and seismic observations from a NetCDF file (using xarray):
-
-```bash
-python -m bayesian_fitting_py --location-mode netcdf_model --seismic-model-file model.nc
-```
-
-The NetCDF should have dimensions for lat, lon, and depth, with Vs (and optionally Q) data variables.
-
-### Options for Model Modes (csv_model, mat_model, netcdf_model)
+### Options for Model Mode
 
 ```bash
 # Filter to specific depth range
-python -m bayesian_fitting_py --location-mode csv_model --seismic-model-file model.csv --model-z-range 100,200
+python -m bayesian_fitting_py --location-mode model --vs-file model.csv --model-z-range 100,200
 
 # Subsample to reduce computation
-python -m bayesian_fitting_py --location-mode mat_model --seismic-model-file model.mat --model-subsample 2
+python -m bayesian_fitting_py --location-mode model --vs-file model.mat --model-subsample 2
 
 # Set default errors if not in file
-python -m bayesian_fitting_py --location-mode csv_model --seismic-model-file model.csv --default-vs-error 0.1 --default-q-error 15
+python -m bayesian_fitting_py --location-mode model --vs-file model.csv --default-vs-error 0.1 --default-q-error 15
 ```
 
 ### Large-Scale Runs
@@ -221,10 +220,9 @@ python -m bayesian_fitting_py --config my_config.yaml -j 0
 # parallel_workers: 4
 ```
 
-Parallel mode is available for model-based location modes (`csv_model`,
-`mat_model`, `netcdf_model`). It pre-computes depth-averaged grids and priors
-once, then distributes locations across worker processes. Results are identical
-to sequential mode.
+Parallel mode is available for `model` and `locations_file` location modes.
+It pre-computes depth-averaged grids and priors once, then distributes
+locations across worker processes. Results are identical to sequential mode.
 
 | Workers | Time (3168 locs × 4 methods) |
 |---------|------------------------------|
@@ -249,14 +247,16 @@ python -m bayesian_fitting_py --config my_config.yaml --anelastic-methods xfit_p
 
 Example YAML configuration file (`my_config.yaml`):
 ```yaml
-# Location mode: manual, locations_file, csv_model, mat_model, netcdf_model
+# Location mode: manual, locations_file, model
+# (legacy aliases csv_model, mat_model, netcdf_model also accepted)
 location_mode: manual
 
 # For locations_file mode:
 # location_file: ./locations.csv
 
-# For csv_model, mat_model, or netcdf_model modes:
-# seismic_model_file: ./model.csv  # or .mat or .nc
+# For model mode:
+# vs_file: ./model.csv     # or .mat or .nc  (Vs + locations)
+# q_file: ./q_model.csv    # optional separate Q file
 # model_z_range: [100, 200]        # optional depth filter
 # model_subsample: 1               # use every Nth point
 # default_vs_error: 0.05           # default if not in file
@@ -286,8 +286,16 @@ anelastic_methods:
   - xfit_premelt
   - eburgers_psp
 
-# Grain size prior: log_uniform, log_normal_1mm, log_normal_1cm
-gs_prior_case: log_uniform
+# Grain size prior
+# gs_prior_type: log_uniform or log_normal
+# gs_prior_mean_mm: 1.0     # mean grain size in mm (for log_normal)
+# gs_prior_std: 1.0         # std dev in log-space (for log_normal)
+gs_prior_type: log_uniform
+
+# Melt fraction prior
+# phi_prior_type: uniform, zero_melt, or piecewise_depth
+# phi_onset_depth_km: 80.0  # for piecewise_depth: depth below which melt is suppressed
+phi_prior_type: uniform
 
 # Observations: Vs, Q, or VsQ
 obs_types: VsQ
@@ -568,15 +576,33 @@ When `save_ml_csv: true`, the output CSV contains one row per location × method
 | `Q_obs`, `Q_pred`, `Q_misfit`, `Q_chi2` | Q fit diagnostics |
 | `chi2_total` | Total χ² misfit |
 
-Viscosity is computed from the HK2003 composite rheology (diffusion + dislocation + GBS)
-and reported as the full posterior marginal distribution (not just the ML point estimate).
+Viscosity is computed using method-consistent rheology: xfit_premelt uses its
+own near-solidus viscosity (Yamauchi & Takei 2016); other methods use HK2003
+composite rheology (diffusion + dislocation + GBS). Reported as the full
+posterior marginal distribution (not just the ML point estimate).
 
 ## Grain Size Priors
 
-Three options are available:
+Configurable via `gs_prior_type` and related fields:
 - `log_uniform`: Uniform probability in log-space (default)
-- `log_normal_1mm`: Log-normal centered at 1 mm grain size
-- `log_normal_1cm`: Log-normal centered at 1 cm grain size
+- `log_normal`: Log-normal distribution with configurable mean (`gs_prior_mean_mm`
+  in mm) and standard deviation (`gs_prior_std` in log-space)
+
+## Melt Fraction Priors
+
+Configurable via `phi_prior_type` and related fields:
+- `uniform`: Flat prior over the sweep range (default)
+- `zero_melt`: Sharply peaked at φ=0 everywhere (suppresses all melt)
+- `piecewise_depth`: Uniform prior above `phi_onset_depth_km`, zero-melt below.
+  Use this when melt is physically expected only above a certain depth (e.g.,
+  the solidus crossing depth)
+- `temperature_dependent`: Placeholder for future T-aware prior (not yet implemented)
+
+Example YAML:
+```yaml
+phi_prior_type: piecewise_depth
+phi_onset_depth_km: 80.0    # melt allowed above 80 km, suppressed below
+```
 
 ## Original MATLAB Code
 

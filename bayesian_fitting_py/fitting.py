@@ -11,8 +11,8 @@ import os
 import numpy as np
 from scipy.io import loadmat
 from typing import Dict, Any, Tuple, Optional
-from dataclasses import dataclass
 
+from .prior import GrainSizePrior, MeltFractionPrior, apply_melt_fraction_prior
 from .data_processing import (
     Location,
     process_seismic_models,
@@ -148,15 +148,6 @@ def _load_sweep_mat(sweep_file: str) -> Dict[str, Any]:
     return sweep
 
 
-
-@dataclass
-class GrainSizePrior:
-    """Configuration for grain size prior distribution."""
-    gs_pdf_type: str = 'uniform'  # 'uniform', 'uniform_log', 'lognormal'
-    gs_mean: Optional[float] = None  # in micrometers, for lognormal
-    gs_std: Optional[float] = None  # dimensionless, in log-space
-
-
 def extract_calculated_values_in_depth_range(
     sweep: Dict[str, Any],
     obs_name: str,
@@ -212,6 +203,11 @@ def fit_seismic_observations(
     grain_size_prior: GrainSizePrior,
     sweep: Optional[Dict[str, Any]] = None,
     sweep_file: str = 'data/plate_VBR/sweep_log_gs.mat',
+    melt_fraction_prior: Optional[MeltFractionPrior] = None,
+    obs_vs_override: Optional[float] = None,
+    sigma_vs_override: Optional[float] = None,
+    obs_q_override: Optional[float] = None,
+    sigma_q_override: Optional[float] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Fit input shear velocity and/or Q to state variables using VBR.
@@ -246,6 +242,13 @@ def fit_seismic_observations(
     # Check which observation files exist
     vs_exists = check_file_exists(filenames, 'Vs')
     q_exists = check_file_exists(filenames, 'Q')
+    # Overrides from 1D Earth model take precedence over .mat files
+    vs_override = obs_vs_override is not None and sigma_vs_override is not None
+    if vs_override:
+        vs_exists = True
+    q_override = obs_q_override is not None and sigma_q_override is not None
+    if q_override:
+        q_exists = True
     
     if not vs_exists and not q_exists:
         raise ValueError("At least one of Vs or Q files must exist")
@@ -262,10 +265,15 @@ def fit_seismic_observations(
     
     # Get observed values
     if vs_exists:
-        print("        extracting Vs")
-        obs_vs, sigma_vs = process_seismic_models(
-            'Vs', location, filenames['Vs'], ifplot=False
-        )
+        if vs_override:
+            print("        using Vs from 1D Earth model")
+            obs_vs = obs_vs_override
+            sigma_vs = sigma_vs_override
+        else:
+            print("        extracting Vs")
+            obs_vs, sigma_vs = process_seismic_models(
+                'Vs', location, filenames['Vs'], ifplot=False
+            )
         mean_vs, z_inds = extract_calculated_values_in_depth_range(
             sweep, 'Vs', anelastic_method, (location.z_min, location.z_max)
         )
@@ -273,10 +281,15 @@ def fit_seismic_observations(
         sweep['z_inds'] = z_inds
     
     if q_exists:
-        print("        extracting Q")
-        obs_q, sigma_q = process_seismic_models(
-            'Q', location, filenames['Q'], ifplot=False
-        )
+        if q_override:
+            print("        using Q from 1D Earth model")
+            obs_q = obs_q_override
+            sigma_q = sigma_q_override
+        else:
+            print("        extracting Q")
+            obs_q, sigma_q = process_seismic_models(
+                'Q', location, filenames['Q'], ifplot=False
+            )
         mean_q, _ = extract_calculated_values_in_depth_range(
             sweep, 'Q', anelastic_method, (location.z_min, location.z_max)
         )
@@ -300,6 +313,11 @@ def fit_seismic_observations(
     if grain_size_prior.gs_pdf_type is not None:
         params['gs_pdf_type'] = grain_size_prior.gs_pdf_type
     
+    # Apply melt fraction prior
+    if melt_fraction_prior is not None:
+        depth_km = (location.z_min + location.z_max) / 2.0
+        apply_melt_fraction_prior(params, melt_fraction_prior, depth_km=depth_km)
+
     # Handle lognormal grain size prior
     gs_lognormal = False
     if params.get('gs_pdf_type') in ['lognormal', 'uniform_log']:
@@ -379,6 +397,7 @@ def fit_preloaded_observations(
     grain_size_prior: GrainSizePrior,
     sweep: Optional[Dict[str, Any]] = None,
     sweep_file: str = 'data/plate_VBR/sweep_log_gs.mat',
+    melt_fraction_prior: Optional[MeltFractionPrior] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Fit pre-loaded seismic observations to state variables using VBR.
@@ -473,6 +492,11 @@ def fit_preloaded_observations(
     if grain_size_prior.gs_pdf_type is not None:
         params['gs_pdf_type'] = grain_size_prior.gs_pdf_type
     
+    # Apply melt fraction prior
+    if melt_fraction_prior is not None:
+        depth_km = (z_min + z_max) / 2.0
+        apply_melt_fraction_prior(params, melt_fraction_prior, depth_km=depth_km)
+
     # Handle lognormal grain size prior
     gs_lognormal = False
     if params.get('gs_pdf_type') in ['lognormal', 'uniform_log']:
