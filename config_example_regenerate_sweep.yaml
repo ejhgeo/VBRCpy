@@ -76,6 +76,11 @@ sweep_generation:
     - xfit_mxw
     - xfit_premelt
 
+  # Viscous method for stored viscosity profiles:
+  # 'HK2003' (Hirth & Kohlstedt 2003, default) or 'xfit_premelt' (YT2016).
+  # Note: xfit_premelt Q always uses its own viscosity internally.
+  # viscous_method: HK2003
+
   # --------------------------------------------------------------------------
   # Output directory & file
   # --------------------------------------------------------------------------

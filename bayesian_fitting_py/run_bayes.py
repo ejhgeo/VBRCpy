@@ -20,6 +20,18 @@ import pickle
 _PACKAGE_DIR = Path(__file__).resolve().parent  # bayesian_fitting_py/
 _PACKAGE_DATA_DIR = _PACKAGE_DIR.parent / 'data'  # vbrc_V2Tpy/data/
 
+# Guard: the data/ and data/reference_models/ directories live outside the
+# Python package tree, so they are only accessible when the package is
+# installed in editable mode (pip install -e).  Warn early if missing.
+if not _PACKAGE_DATA_DIR.is_dir():
+    raise RuntimeError(
+        f"Data directory not found: {_PACKAGE_DATA_DIR}\n"
+        "This package must be installed in editable mode:\n"
+        "    pip install -e ./vbrc_V2Tpy\n"
+        "A regular 'pip install' will not work because the data/ "
+        "directory lives outside the Python package tree."
+    )
+
 def _default_data_path(*parts: str) -> str:
     """Return an absolute path into the package's bundled data directory."""
     return str(_PACKAGE_DATA_DIR.joinpath(*parts))
@@ -45,6 +57,7 @@ from .prior import (
     store_ensemble,
     GrainSizePrior,
     MeltFractionPrior,
+    TemperaturePrior,
 )
 from .parallel import run_locations_parallel
 from .vbr.thermal import load_q_from_earth_model, load_vs_from_earth_model
@@ -105,7 +118,7 @@ class InversionConfig:
     
     # File paths for seismic data sources.
     # vs_file / q_file accept any supported format (.mat, .csv, .nc) or a built-in
-    # 1D Earth model name ('prem', 'stw105').  File type is auto-detected from the
+    # 1D Earth model name ('prem', 'stw105', 'stw105_nocrust').  File type is auto-detected from the
     # extension.  In 'model' mode vs_file also supplies the location grid.
     # If the same file contains both Vs and Q, set both to the same path.
     vs_file: str = field(default_factory=lambda: _default_data_path('vel_models', 'Shen_Ritzwoller_2016.mat'))
@@ -137,6 +150,16 @@ class InversionConfig:
     # For piecewise_depth: depth (km) below which melt is suppressed
     phi_onset_depth_km: float = 80.0
     
+    # Temperature prior configuration
+    # t_prior_type: 'uniform' (flat, original behaviour) or 'geotherm'
+    #   (Gaussian centred on a reference geotherm at each depth)
+    t_prior_type: str = 'uniform'
+    # Built-in geotherm name ('sc2006') or path to a CSV file with
+    # columns depth_km, temperature_C
+    geotherm_file: str = 'sc2006'
+    # Standard deviation (°C) of the Gaussian T prior
+    geotherm_std_C: float = 200.0
+    
     # Observation types to use: 'Vs', 'Q', or 'VsQ' (both)
     obs_types: str = 'VsQ'
     
@@ -157,6 +180,66 @@ class InversionConfig:
     # 0 = auto (use all available CPU cores), 1 = sequential (no parallelization),
     # N>1 = use N worker processes.  Only used for large-scale (preloaded) runs.
     parallel_workers: int = 1
+    
+    # Run tagging for inversion output subdirectory naming.
+    # 'none'  — use 'inversion_results' (current default behaviour)
+    # 'auto'  — auto-generate a compact tag from inversion parameters
+    # <str>   — use 'inversion_<str>' as the subdirectory name
+    run_tag: str = 'none'
+    
+    def _auto_run_tag(self) -> str:
+        """Build a compact, human-readable tag from inversion parameters."""
+        parts = []
+        # Anelastic method(s)
+        if len(self.anelastic_methods) == 1:
+            parts.append(self.anelastic_methods[0])
+        else:
+            parts.append('+'.join(self.anelastic_methods))
+        # Temperature prior
+        if self.t_prior_type == 'uniform':
+            parts.append('Tuni')
+        elif self.t_prior_type == 'geotherm':
+            parts.append(f'Tgeo{self.geotherm_std_C:g}')
+        else:
+            parts.append(f'T{self.t_prior_type}')
+        # Grain-size prior
+        if self.gs_prior_type in ('log_uniform', 'uniform'):
+            parts.append('gsLU')
+        elif self.gs_prior_type == 'log_normal':
+            mean = self.gs_prior_mean_mm if self.gs_prior_mean_mm is not None else '?'
+            std = self.gs_prior_std if self.gs_prior_std is not None else 0.25
+            parts.append(f'gsLN{mean}s{std}')
+        else:
+            parts.append(f'gs{self.gs_prior_type}')
+        # Melt-fraction prior
+        if self.phi_prior_type == 'uniform':
+            parts.append('phiU')
+        elif self.phi_prior_type == 'piecewise_depth':
+            parts.append(f'phiPD{self.phi_onset_depth_km:g}')
+        elif self.phi_prior_type == 'zero_melt':
+            parts.append('phiZM')
+        else:
+            parts.append(f'phi{self.phi_prior_type}')
+        # Observation types
+        parts.append(self.obs_types)
+        # Q error
+        parts.append(f'qe{self.default_q_error:g}')
+        return '_'.join(parts)
+    
+    def resolve_inversion_dir(self) -> str:
+        """Return the inversion output subdirectory path.
+        
+        The path is relative to (and inside) ``output_dir``:
+        - run_tag='none'  → ``{output_dir}/inversion_results``
+        - run_tag='auto'  → ``{output_dir}/inversion_{auto_tag}``
+        - run_tag=<str>   → ``{output_dir}/inversion_{run_tag}``
+        """
+        if self.run_tag == 'none':
+            return os.path.join(self.output_dir, 'inversion_results')
+        elif self.run_tag == 'auto':
+            return os.path.join(self.output_dir, f'inversion_{self._auto_run_tag()}')
+        else:
+            return os.path.join(self.output_dir, f'inversion_{self.run_tag}')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -370,6 +453,20 @@ def get_grain_size_prior(config: 'InversionConfig') -> Tuple[GrainSizePrior, str
     return prior, fig_prefix
 
 
+def get_temperature_prior(config: 'InversionConfig') -> TemperaturePrior:
+    """Build temperature prior from config fields.
+
+    Returns
+    -------
+    TemperaturePrior
+    """
+    return TemperaturePrior(
+        t_prior_type=config.t_prior_type,
+        geotherm_file=config.geotherm_file,
+        geotherm_std_C=config.geotherm_std_C,
+    )
+
+
 def get_melt_fraction_prior(config: 'InversionConfig') -> MeltFractionPrior:
     """Build melt fraction prior from config fields.
 
@@ -439,13 +536,6 @@ def prepare_locations(config: InversionConfig) -> Tuple[
     
     elif config.location_mode == 'model':
         # Load locations AND seismic data from vs_file (format auto-detected)
-        vs_type = detect_file_type(config.vs_file)
-        if vs_type == 'earth_model':
-            raise ValueError(
-                f"vs_file='{config.vs_file}' is a 1D Earth model and cannot "
-                "provide a location grid.  Use 'manual' or 'locations_file' "
-                "mode, or provide a .mat/.csv/.nc file for vs_file."
-            )
         seismic_model_data = load_seismic_model_universal(
             config.vs_file,
             z_range=config.model_z_range,
@@ -640,6 +730,9 @@ def run_bayesian_inversion(
     # Setup melt fraction prior
     melt_fraction_prior = get_melt_fraction_prior(config)
     
+    # Setup temperature prior
+    temperature_prior = get_temperature_prior(config)
+    
     # Setup file paths based on obs_types
     # filenames dict is only used for .mat file loading in manual/locations_file
     # modes.  Earth model names ('prem', 'stw105') are handled via overrides.
@@ -655,9 +748,11 @@ def run_bayesian_inversion(
     
     print(f"Using observations: {config.obs_types}")
     
-    # Create output directory
-    output_dir = os.path.join(config.output_dir, fig_prefix_dir)
+    # Resolve inversion output directory (respects run_tag)
+    inversion_dir = config.resolve_inversion_dir()
+    output_dir = os.path.join(inversion_dir, fig_prefix_dir)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    print(f"Inversion output directory: {inversion_dir}")
     
     # Initialize storage
     regional_fits: Dict[str, Dict[str, Any]] = {}
@@ -701,6 +796,7 @@ def run_bayesian_inversion(
                 use_vs=use_vs,
                 use_q=use_q,
                 melt_fraction_prior=melt_fraction_prior,
+                temperature_prior=temperature_prior,
             )
             _elapsed = _time.time() - _t0
             print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")
@@ -804,6 +900,7 @@ def run_bayesian_inversion(
                             (z_min, z_max), anelastic_method, grain_size_prior,
                             sweep_file=config.sweep_file,
                             melt_fraction_prior=melt_fraction_prior,
+                            temperature_prior=temperature_prior,
                         )
                         first_run = False
                     else:
@@ -812,6 +909,7 @@ def run_bayesian_inversion(
                             (z_min, z_max), anelastic_method, grain_size_prior,
                             sweep=sweep,
                             melt_fraction_prior=melt_fraction_prior,
+                            temperature_prior=temperature_prior,
                         )
                 else:
                     # Load observations from files (original behavior)
@@ -825,6 +923,7 @@ def run_bayesian_inversion(
                             filenames, location, anelastic_method, grain_size_prior,
                             sweep_file=config.sweep_file,
                             melt_fraction_prior=melt_fraction_prior,
+                            temperature_prior=temperature_prior,
                             obs_vs_override=vs_ovr,
                             sigma_vs_override=svs_ovr,
                             obs_q_override=q_ovr,
@@ -836,6 +935,7 @@ def run_bayesian_inversion(
                             filenames, location, anelastic_method, grain_size_prior,
                             sweep=sweep,
                             melt_fraction_prior=melt_fraction_prior,
+                            temperature_prior=temperature_prior,
                             obs_vs_override=vs_ovr,
                             sigma_vs_override=svs_ovr,
                             obs_q_override=q_ovr,
@@ -990,13 +1090,13 @@ def run_bayesian_inversion(
         plot_regional_fits(
             regional_fits, locs_array, names,
             colors, fig_prefix_dir,
-            save_dir=config.output_dir,
+            save_dir=inversion_dir,
         )
         
         plot_ensemble_pdfs(
             ensemble_pdf, ensemble_pdf_no_mxw,
             locs_array, names, colors,
-            fig_prefix_dir, save_dir=config.output_dir,
+            fig_prefix_dir, save_dir=inversion_dir,
         )
     
     # Print ML estimates summary (abbreviated for large runs)
@@ -1023,7 +1123,7 @@ def run_bayesian_inversion(
         if config.ml_csv_file:
             csv_path = config.ml_csv_file
         else:
-            csv_path = os.path.join(config.output_dir, 'ml_estimates.csv')
+            csv_path = os.path.join(inversion_dir, 'ml_estimates.csv')
         os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
         
         # Get all field names from the records
@@ -1051,7 +1151,7 @@ def run_bayesian_inversion(
         print(f"\nML estimates saved to {csv_path}")
     
     # Save results to pickle
-    save_path = os.path.join(config.output_dir, f'{fig_prefix_dir}_ensembles.pkl')
+    save_path = os.path.join(inversion_dir, f'{fig_prefix_dir}_ensembles.pkl')
     with open(save_path, 'wb') as f:
         pickle.dump(results, f)
     print(f"Full results saved to {save_path}")
@@ -1392,6 +1492,15 @@ Examples:
         '--sweep-file', type=str, default=None,
         help='Path to sweep .npz file (overrides the sweep_file in config)'
     )
+    parser.add_argument(
+        '--run-tag', type=str, default=None,
+        help=(
+            'Inversion output subdirectory tag. '
+            "'none' = inversion_results (default), "
+            "'auto' = auto-generated from parameters, "
+            'or any custom string.'
+        )
+    )
     
     args = parser.parse_args()
     
@@ -1473,6 +1582,8 @@ Examples:
         config.parallel_workers = args.parallel
     if args.sweep_file is not None:
         config.sweep_file = args.sweep_file
+    if args.run_tag is not None:
+        config.run_tag = args.run_tag
     
     # Run the inversion
     results = run_bayesian_inversion(config, working_dir=args.data_dir)

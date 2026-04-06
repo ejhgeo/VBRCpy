@@ -1,6 +1,6 @@
 # vbrc_V2Tpy — Project State Document
 
-> **Last updated:** 2026-03-25
+> **Last updated:** 2026-04-06
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
 > **Latest commit:** `8a93465` — "Fix MATLAB struct indexing bug, rename compare_lut_slices, cleanup"
 > **Uncommitted changes:** Yes — see §6 "Recent Uncommitted Changes"
@@ -29,13 +29,20 @@ port is a standalone pip-installable package at
 vbrc_V2Tpy/
 ├── README.md
 ├── setup.py / pyproject.toml          # pip-installable
+├── PROJECT_STATE.md                   # this file
 ├── config_example_bayesian_fitting.yaml
 ├── config_example_regenerate_sweep.yaml
 ├── data/                              # bundled .mat data files
 │   ├── vel_models/Shen_Ritzwoller_2016.mat
 │   ├── Q_models/Dalton_Ekstrom_2008.mat
 │   ├── LAB_models/HopperFischer2018.mat
-│   └── plate_VBR/sweep_log_gs.mat
+│   ├── plate_VBR/sweep_log_gs.mat
+│   └── reference_models/             # bundled 1D Earth models & geotherms
+│       ├── PREM_for_VBRc.txt
+│       ├── PREMnoCrust_for_VBRc.txt
+│       ├── STW105_for_VBRc.txt
+│       ├── STW105noCrust_for_VBRc.txt
+│       └── SC2006_geotherm.csv
 ├── validation/                        # validation & testing framework
 │   ├── __init__.py
 │   ├── syntheticTest_geotherm/  # geotherm-based validation (SC2006 continental geotherm)
@@ -53,7 +60,7 @@ vbrc_V2Tpy/
     ├── run_bayes.py          # CLI entry point + InversionConfig + main loop
     ├── fitting.py            # fit_seismic_observations, fit_preloaded_observations, extract_ml_estimates
     ├── data_processing.py    # Location, SeismicModelData, loaders (CSV/mat/NetCDF)
-    ├── prior.py              # prior_model_probs, store_ensemble, confidence_cutoffs
+    ├── prior.py              # prior_model_probs, store_ensemble, confidence_cutoffs, TemperaturePrior
     ├── probability.py        # probability_distributions (likelihood, posterior, combined)
     ├── parallel.py           # multiprocessing support for large-scale runs
     ├── plotting.py           # all figure generation
@@ -63,17 +70,40 @@ vbrc_V2Tpy/
         ├── cammarano.py      # Cammarano et al. (2003) finite-strain mineral physics
         ├── generate_sweep.py # parameter sweep generation (Box with meanVs, meanQ, meanEta)
         ├── params.py         # default VBR parameters
-        ├── thermal.py        # half-space cooling, adiabatic geotherm
+        ├── thermal.py        # half-space cooling, adiabatic geotherm, Earth model I/O, geotherm I/O
         ├── plot_lut.py       # look-up table plotting (.mat, .npz, .pkl)
-        └── PREM_for_VBRc.csv # PREM density profile for depth-dependent density
+        ├── PREM_for_VBRc.csv # PREM density profile for depth-dependent density
+        ├── STW105_for_VBRc.txt  # STW105 reference model
+        └── STW105noCrust_for_VBRc.txt  # STW105 without crust
+```
+
+### Patagonia Test Case (workspace root, not in the package)
+
+```
+Patagonia_Test/
+├── config.yaml            # full sweep + inversion config
+├── run_patagonia.py       # 4-step orchestrator (sweep → inversion → profile plots)
+├── plot_map_results.py    # PyGMT-based map-view plotting of inversion results
+├── 3_D_model_WashU.nc     # 3D Vs model (NetCDF)
+└── output/
+    ├── sweep.npz              # shared parameter sweep
+    ├── sweep_fingerprint.json # config hash (sweep_generation section only)
+    ├── lut_plots/             # look-up table diagnostic plots
+    ├── inversion_results/     # default inversion output (run_tag: none)
+    └── inversion_<tag>/       # auto/custom-tagged inversion output (run_tag: auto|<str>)
+        ├── ml_estimates.csv
+        ├── *_ensembles.pkl
+        ├── patagonia_profiles_*.png
+        └── posteriors/
 ```
 
 ## 3. Python Environment
 
-- **Python:** 3.9.6 (system)
-- **venv:** `/Users/ehightow/Research/V2T_Inversion/.venv/`
-- **conda env (with xarray):** `pyGMT2`
-- **Key deps:** numpy, scipy, matplotlib, h5py (for .mat), xarray + netCDF4 (for NetCDF)
+- **Python:** 3.12 (via conda env `pyGMT2`)
+- **venv:** `/Users/ehightow/Research/V2T_Inversion/.venv/` (system Python 3.9.6)
+- **conda env (primary):** `pyGMT2` — Python 3.12, includes xarray, PyGMT 0.15, netCDF4
+- **Key deps:** numpy, scipy, matplotlib, h5py (for .mat), xarray + netCDF4 (for NetCDF),
+  PyGMT (for map plots), pandas
 - **Install:** `pip install -e .` from `vbrc_V2Tpy/`
 
 ## 4. How to Run
@@ -137,7 +167,82 @@ All four methods verified against MATLAB output to floating-point precision:
 
 ## 6. Key Features Implemented
 
-### Recent Uncommitted Changes (2026-03-25)
+### Recent Uncommitted Changes (2026-04-06)
+
+#### Run Tag Feature (`run_tag` in InversionConfig)
+- **New `run_tag` config field** (default `'none'`): controls the inversion
+  output subdirectory name, allowing multiple inversion runs with different
+  parameters to share the same sweep data.
+- Three modes:
+  - `run_tag: none` — output goes to `{output_dir}/inversion_results/` (default,
+    preserves backward compatibility)
+  - `run_tag: auto` — auto-generates a compact, human-readable tag from inversion
+    parameters, e.g. `inversion_eburgers_psp_Tgeo100_gsLU_phiU_VsQ_qe100`
+  - `run_tag: my_experiment` — uses `inversion_my_experiment/` as the subdirectory
+- **`_auto_run_tag()` method**: builds tag from anelastic_methods, t_prior_type +
+  geotherm_std_C, gs_prior_type + params, phi_prior_type, obs_types, default_q_error
+- **`resolve_inversion_dir()` method**: returns the appropriate subdirectory path;
+  only affects the inversion output, leaving sweep.npz and LUT plots in the parent
+  `output_dir`
+- **`--run-tag` CLI argument**: overrides config from command line
+- All inversion outputs (posteriors, CSV, pickle, summary plots) routed through
+  `inversion_dir` from `resolve_inversion_dir()`
+
+#### Geotherm-Based Temperature Prior
+- **New `t_prior_type` config option**: `'uniform'` (default, flat prior) or
+  `'geotherm'` (Gaussian centered on a reference geotherm at each depth)
+- **`geotherm_file`**: built-in name (`'sc2006'` for Stixrude & Lithgow-Bertelloni
+  2006 continental geotherm) or path to a CSV with `depth_km, temperature_C` columns
+- **`geotherm_std_C`**: standard deviation (°C) of the Gaussian prior (default 200.0)
+- **`TemperaturePrior` dataclass** in `prior.py`: encapsulates prior configuration;
+  `apply_temperature_prior()` computes the prior at each depth
+- **Parallel support**: `parallel.py` pre-computes geotherm means at each unique
+  depth via `load_geotherm()` and builds per-depth priors for efficient distribution
+  across workers
+
+#### Built-in 1D Earth Models
+- **New built-in model names**: `prem`, `prem_nocrust`, `stw105`, `stw105_nocrust`
+  — usable as `vs_file`, `q_file`, `reference_model`, or `density_model` values
+- **`_BUILTIN_MODELS` dict** in `thermal.py` maps names to bundled text files in
+  `data/reference_models/`: PREM_for_VBRc.txt, PREMnoCrust_for_VBRc.txt,
+  STW105_for_VBRc.txt, STW105noCrust_for_VBRc.txt
+- **`load_vs_from_earth_model()` / `load_q_from_earth_model()`**: load Vs/Q
+  profiles from builtin or custom Earth model files
+- **STW105 discontinuity fix**: epsilon-offset approach handles duplicate depths
+  at discontinuities (identical to PREM fix)
+
+#### Configurable Viscous Method (`viscous_method`)
+- **`viscous_method` sweep parameter**: `'HK2003'` (Hirth & Kohlstedt 2003
+  composite rheology, default) or `'xfit_premelt'` (Yamauchi & Takei 2016)
+- Controls which viscosity is stored in `meanEta` during sweep generation;
+  previously always used HK2003
+
+#### Patagonia 3D Test Case (`Patagonia_Test/`)
+- **`run_patagonia.py`**: Full 4-step orchestrator for a real-data Patagonia
+  inversion — sweep generation → Bayesian inversion → profile comparison plots
+- **`plot_map_results.py`**: PyGMT-based post-processing script for map-view
+  plots of inversion results at multiple depths
+  - Uses manual `fig.shift_origin()` layout (PyGMT 0.15 subplot API incompatible)
+  - Configurable row/column spacing, depth annotations (rotated 90°), variable
+    labels, and colour bars only on the bottom row
+  - `_find_default_csv()` auto-discovers `ml_estimates.csv` in `inversion_*`
+    subdirectories (run_tag-aware)
+- **`config.yaml`**: combined sweep + inversion config for Patagonia
+  - Uses `cammarano2003` elastic method, `stw105_nocrust` density model and
+    reference model, `yk2001` solidus, `YT2024` direct melt effects
+  - Geotherm prior (SC2006) with 100°C std, uniform grain-size and melt priors
+  - WashU 3D Vs model (NetCDF) + STW105 Q model
+- **Profile comparison plots**: 2×3 figures showing T, Vs, Q, φ, gs, η mean
+  profiles with reference model overlay; now save to the run-tagged inversion
+  directory (via `save_dir` parameter)
+
+#### Reference Model Support in Profile Plots
+- **`reference_model` config option**: specifies a built-in 1D Earth model for
+  comparison on profile plots (Vs and Q panels)
+- Used in `run_patagonia.py` to overlay STW105 Vs/Q against laterally-averaged
+  inversion results
+
+### Previous Uncommitted Changes (2026-03-25)
 
 #### Unified Config Files & Single `output_dir`
 - **Config consolidation:** Merged separate `sweep_config.yaml` and
@@ -480,23 +585,26 @@ workspace root** (no longer in the repo). Root cause was grid augmentation
 - The caller already guarded data population via `use_vs`/`use_q`, so the
   behavior was correct in practice; this fix adds defense-in-depth.
 
-### KNOWN BUG — Cammarano 2003 inversion produces bad results
-When sweep is generated with `method: cammarano2003` and Bayesian inversion is run,
-temperatures are underestimated at all depths (even deeper upper mantle) and
-viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
-- **Suspected root cause:** The Cammarano pyrolite model produces lower
-  unrelaxed Vs than the pure-olivine anharmonic model at the same (T, P):
-  - Fe correction reduces olivine G₀ from 81 → 77.9 GPa
-  - VRH averaging with softer non-olivine phases (cpx G₀≈66 GPa, opx G₀≈76 GPa)
-  - Combined effect: lower Gu → lower unrelaxed Vs → matching observed Vs
-    requires cooler T → exponentially higher η
-- **Also applies at transition zone depths** (not just upper mantle)
-- The mineral assemblage volume fractions are approximate and could compound the issue
-- Unit tests (Vs values at individual T, P points) pass correctly; the problem
-  manifests only through the full Bayesian inversion loop
-- Needs investigation: compare Vs between anharmonic and cammarano2003 at same
-  conditions; validate against published Cammarano velocity profiles; possibly
-  adjust assemblage fractions or Fe content
+### RESOLVED — Cammarano 2003 inversion previously produced bad results
+Earlier testing with `cammarano2003` yielded underestimated temperatures and
+absurdly high viscosities (>10^26 Pa·s). This was **not a code bug** but a
+matter of choosing appropriate physical parameters — in particular, the grain
+size was set too large, leading to excessively high viscosity.
+- The Cammarano pyrolite model does produce lower unrelaxed Vs than the
+  pure-olivine anharmonic model at the same (T, P) due to Fe correction and
+  VRH averaging with softer non-olivine phases — this is physically correct
+  behaviour, not a bug.
+- With appropriate parameter choices (e.g. realistic grain size, geotherm
+  prior), the Patagonia test case using cammarano2003 produces plausible
+  results.
+- The mineral assemblage volume fractions are approximate (assembled from
+  general knowledge); users should verify against preferred sources.
+
+### KNOWN ISSUE — PyGMT 0.15 subplot API incompatibility
+- `plot_map_results.py` uses manual `fig.shift_origin()` instead of `fig.subplot()`
+  because PyGMT 0.15's subplot API does not correctly handle multi-panel layouts
+  with per-panel colour maps and selective axis labelling.
+- Workaround is stable but less elegant than native subfigure support.
 
 ### Other Issues
 - **Synthetic adiabat test produces noisier results than roundtrip test** — this
@@ -516,8 +624,9 @@ viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
   which loads .mat files per-location).
 - The `agent_history_ClaudeOpus4.6.json` file in the repo root is untracked
   and can be deleted or gitignored.
-- Consider adding Q observations to the tomography inversions (currently Vs only
-  for the WashU model since it doesn't include Q).
+- Profile comparison figures from earlier inversion runs (before `run_tag` +
+  `save_dir` changes) may still exist in the top-level `output/` directory;
+  new runs save them inside the inversion subdirectory.
 
 ## 9. Test Results
 
@@ -525,5 +634,53 @@ viscosities are absurdly high (>10^26 Pa·s, should be ~10^21).
 |------|-------------------|-------------------|---------------------|
 | WashU tomo (test_config.yaml) | ~22 min | ~8 min | 3168 × 4 |
 | 2-location eta test | ~30s | N/A (manual mode) | 2 × 2 |
+| Patagonia 3D (run_patagonia.py) | — | ~hours (16 cores) | ~12,672 × 1 |
 
 Parallel and sequential CSV outputs are byte-for-byte identical (verified with `diff`).
+
+## 10. Patagonia Test Case Details
+
+### Configuration (`Patagonia_Test/config.yaml`)
+- **Vs model**: WashU 3D tomography (NetCDF), subsampled ×2
+- **Q model**: `stw105_nocrust` (built-in 1D)
+- **Reference model**: `stw105_nocrust` (for profile comparison plots)
+- **Elastic method**: `cammarano2003` — finite-strain mineral physics
+- **Density model**: `stw105_nocrust`
+- **Solidus**: `yk2001`
+- **Direct melt effect**: YT2024 (`include_direct_melt_effect: 1`)
+- **Depth range**: 10–650 km
+- **Anelastic method**: `eburgers_psp`
+- **T prior**: geotherm (SC2006, σ = 100°C)
+- **GS prior**: uniform (log-uniform)
+- **φ prior**: uniform
+- **Obs types**: VsQ
+- **Q error**: 100.0 (absolute)
+- **Run tag**: `auto` → `inversion_eburgers_psp_Tgeo100_gsLU_phiU_VsQ_qe100`
+
+### Output Structure (with run_tag: auto)
+```
+Patagonia_Test/output/
+├── sweep.npz                   # shared across all inversions
+├── sweep_fingerprint.json
+├── lut_plots/
+└── inversion_eburgers_psp_Tgeo100_gsLU_phiU_VsQ_qe100/
+    ├── ml_estimates.csv        # 28-column results
+    ├── *_ensembles.pkl
+    ├── patagonia_profiles_*.png
+    └── posteriors/
+```
+
+### Map Plot Usage (`plot_map_results.py`)
+```bash
+# Single depth
+python Patagonia_Test/plot_map_results.py --depth 100
+
+# Multiple depths (one row per depth)
+python Patagonia_Test/plot_map_results.py --depth 50 100 200
+
+# Custom variables and region
+python Patagonia_Test/plot_map_results.py \
+    --depth 80 150 \
+    --vars T_mean log10_eta_mean phi_mean \
+    --region -77 -64 -57 -42
+```

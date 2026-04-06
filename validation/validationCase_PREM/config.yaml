@@ -1,24 +1,24 @@
 # ============================================================================
-# Combined config for the geotherm round-trip validation (syntheticTest_geotherm).
+# Combined config for the PREM validation case (validationCase_PREM).
+#
+# Inverts PREM Vs and Q profiles to recover temperature, melt fraction,
+# grain size, and viscosity as a function of depth.  There is no "true"
+# answer — this case checks that the inversion produces geophysically
+# reasonable profiles given a well-known 1-D reference Earth model.
 #
 # Run with:
-#   python -m vbrc_V2Tpy.validation.syntheticTest_geotherm.run_example
+#   python -m vbrc_V2Tpy.validation.validationCase_PREM.run_prem
 # ============================================================================
 
 # ── Output ───────────────────────────────────────────────────────────────────
-# Change this ONE line to redirect all outputs to a new directory.
-# The runner (run_example.py) automatically places outputs as follows:
-#   sweep.npz                           →  output_dir/
-#   lut_plots/                          →  output_dir/
-#   synthetic_observations.csv          →  output_dir/
-#   inversion results & plots           →  output_dir/inversion_results/
-output_dir: validation_tests/syntheticTest_geotherm_newDataLoader
+output_dir: validation_tests/validationCase_PREM_cammarano_HK2003
+
+# Reference Earth model for Vs/Q observations to invert.
+# Options: prem, prem_nocrust, stw105
+reference_model: prem_nocrust
 
 
 # ── Sweep generation ─────────────────────────────────────────────────────────
-# Parameters for building the VBR look-up table used by both the forward model
-# and the Bayesian inversion.  Output path is controlled by output_dir above;
-# do not add output_dir or output_file inside this section.
 sweep_generation:
   temperature:
     min: 100
@@ -47,14 +47,20 @@ sweep_generation:
   n_freq: 10
 
   anelastic_methods:
+    - eburgers_psp
     - xfit_premelt
 
-  viscous_method: xfit_premelt
+  # Viscous method for stored viscosity profiles:
+  # 'HK2003' (Hirth & Kohlstedt 2003, default) or 'xfit_premelt' (YT2016)
+  viscous_method: HK2003
 
   elastic:
     method: cammarano2003
+    # temperature_scaling: isaak
+    # pressure_scaling: cammarano
+    # reference_scaling: default
 
-  density_model: prem
+  density_model: prem_nocrust
 
   solidus_method: yk2001
 
@@ -66,28 +72,31 @@ sweep_generation:
 
 
 # ── Inversion settings ────────────────────────────────────────────────────────
-# The synthetic observations CSV, sweep file, and inversion output directory
-# are all derived from output_dir automatically by run_example.py.
-# Do not set vs_file, q_file, or sweep_file here.
+# vs_file and q_file can be a built-in 1D model name ('prem', 'prem_nocrust',
+# 'stw105') or a path to a .csv/.mat/.nc file.
 location_mode: model
+vs_file: prem_nocrust
+q_file: prem_nocrust
+model_z_range: [10, 660]
 
 default_vs_error: 0.05
-default_q_error: 12.0
-q_error_mode: percent   # Q error as a percent of observed Q
+default_q_error: 50.0
+q_error_mode: percent
 
 anelastic_methods:
+  - eburgers_psp
   - xfit_premelt
 
 gs_prior_type: log_normal
-gs_prior_mean_mm: 0.8
-gs_prior_std: 0.25
+gs_prior_mean_mm: 4.0
+gs_prior_std: 1.0
 
-phi_prior_type: piecewise_depth
+phi_prior_type: piecewise_depth 
 phi_onset_depth_km: 80.0
 
 obs_types: VsQ
 
 save_plots: true
 force_plots: true
-plot_every_n: 13
+plot_every_n: 5
 save_ml_csv: true

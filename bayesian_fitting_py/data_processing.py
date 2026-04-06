@@ -937,11 +937,17 @@ def load_seismic_model_from_csv(
     }
     df.rename(columns=col_map, inplace=True)
     
-    # Validate required columns
-    required = ['lon', 'lat', 'depth']
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}. Found: {list(df.columns)}")
+    # Validate required columns — lat and lon are optional for 1D models
+    if 'depth' not in df.columns:
+        raise ValueError(f"Missing required column 'depth'. Found: {list(df.columns)}")
+    
+    if 'lat' not in df.columns or 'lon' not in df.columns:
+        # 1D model: no spatial coordinates — set lat=lon=0
+        if 'lat' not in df.columns:
+            df['lat'] = 0.0
+        if 'lon' not in df.columns:
+            df['lon'] = 0.0
+        print(f"  No lat/lon columns — treating as 1D depth profile (lat=0, lon=0)")
     
     if 'vs' not in df.columns and 'q' not in df.columns:
         raise ValueError("CSV must contain at least 'Vs' or 'Q' column")
@@ -1527,7 +1533,7 @@ def _find_var(ds, candidates: List[str]) -> Optional[str]:
 
 
 # Built-in 1D Earth model names recognised by detect_file_type()
-BUILTIN_EARTH_MODELS = ('prem', 'stw105')
+BUILTIN_EARTH_MODELS = ('prem', 'prem_nocrust', 'stw105', 'stw105_nocrust')
 
 
 def detect_file_type(filepath: str) -> str:
@@ -1537,7 +1543,7 @@ def detect_file_type(filepath: str) -> str:
     ----------
     filepath : str
         A file path, or one of the built-in model names
-        (``'prem'``, ``'stw105'``).
+        (``'prem'``, ``'stw105'``, ``'stw105_nocrust'``).
 
     Returns
     -------
@@ -1558,8 +1564,90 @@ def detect_file_type(filepath: str) -> str:
     else:
         raise ValueError(
             f"Cannot determine file type for '{filepath}'. "
-            "Use .mat, .csv, .nc, or a built-in model name (prem, stw105)."
+            "Use .mat, .csv, .nc, or a built-in model name (prem, stw105, stw105_nocrust)."
         )
+
+
+def load_seismic_model_from_earth_model(
+    model_name: str,
+    z_range: Optional[Tuple[float, float]] = None,
+    default_vs_error: float = 0.05,
+    default_q_error: float = 10.0,
+    q_error_mode: str = 'absolute',
+) -> SeismicModelData:
+    """Load a built-in 1D Earth model as a SeismicModelData object.
+
+    Reads Vs and Qmu from the built-in model files (e.g. PREM, STW105)
+    and wraps them into the standard :class:`SeismicModelData` container
+    with lat=lon=0 for all depth points.
+
+    Parameters
+    ----------
+    model_name : str
+        Built-in model name: ``'prem'``, ``'prem_nocrust'``, ``'stw105'``, or ``'stw105_nocrust'``.
+    z_range : tuple of float, optional
+        ``(z_min, z_max)`` in km to filter depths.
+    default_vs_error : float
+        Default Vs uncertainty [km/s].
+    default_q_error : float
+        Default Q uncertainty (absolute or percent, see *q_error_mode*).
+    q_error_mode : str
+        ``'absolute'`` or ``'percent'``.
+
+    Returns
+    -------
+    SeismicModelData
+    """
+    from .vbr.thermal import _load_earth_model
+
+    depth_m, _density, vs_m_s, qmu = _load_earth_model(
+        model_name, fields=['Vs', 'Qmu'],
+    )
+    depth_km = depth_m / 1e3
+    vs_km_s = vs_m_s / 1e3
+
+    # Filter: keep only mantle depths with Vs > 0
+    mask = vs_m_s > 0
+    if z_range is not None:
+        mask &= (depth_km >= z_range[0]) & (depth_km <= z_range[1])
+    depth_km = depth_km[mask]
+    vs_km_s = vs_km_s[mask]
+    qmu = qmu[mask]
+
+    if len(depth_km) == 0:
+        raise ValueError(
+            f"No valid data from model '{model_name}' in depth range {z_range}"
+        )
+
+    # Build depth ranges from spacing
+    depth_to_range = _calculate_depth_ranges(depth_km)
+
+    locations = [(0.0, 0.0)] * len(depth_km)
+    names = [str(i + 1) for i in range(len(depth_km))]
+    z_ranges_list = [depth_to_range.get(d, (d - 2.5, d + 2.5)) for d in depth_km]
+    depths = depth_km.tolist()
+
+    vs_errors = np.full_like(vs_km_s, default_vs_error)
+    if q_error_mode == 'percent':
+        q_errors = qmu * default_q_error / 100.0
+    else:
+        q_errors = np.full_like(qmu, default_q_error)
+
+    print(f"Loaded 1D Earth model '{model_name}': {len(depth_km)} depth points")
+    print(f"  Depth range: {depth_km.min():.1f} to {depth_km.max():.1f} km")
+    print(f"  Vs range: {vs_km_s.min():.3f} to {vs_km_s.max():.3f} km/s")
+    print(f"  Q range: {qmu.min():.1f} to {qmu.max():.1f}")
+
+    return SeismicModelData(
+        locations=locations,
+        names=names,
+        z_ranges=z_ranges_list,
+        depths=depths,
+        Vs=vs_km_s,
+        Vs_error=vs_errors,
+        Q=qmu,
+        Q_error=q_errors,
+    )
 
 
 def load_seismic_model_universal(
@@ -1572,15 +1660,16 @@ def load_seismic_model_universal(
 ) -> SeismicModelData:
     """Load a seismic model from any supported file format.
 
-    The file type is auto-detected from the extension:
+    The file type is auto-detected from the extension or name:
     ``.mat`` → :func:`load_seismic_model_from_mat`,
     ``.csv``/``.txt`` → :func:`load_seismic_model_from_csv`,
-    ``.nc`` → :func:`load_seismic_model_from_netcdf`.
+    ``.nc`` → :func:`load_seismic_model_from_netcdf`,
+    built-in model name (e.g. ``'prem'``) → :func:`load_seismic_model_from_earth_model`.
 
     Parameters
     ----------
     filepath : str
-        Path to the seismic model file.
+        Path to the seismic model file, or a built-in model name.
     z_range, subsample, default_vs_error, default_q_error, q_error_mode
         Passed through to the format-specific loader.
 
@@ -1607,9 +1696,15 @@ def load_seismic_model_universal(
             default_q_error=default_q_error, z_range=z_range,
             subsample=subsample, q_error_mode=q_error_mode,
         )
+    elif ftype == 'earth_model':
+        return load_seismic_model_from_earth_model(
+            filepath.lower().strip(),
+            z_range=z_range,
+            default_vs_error=default_vs_error,
+            default_q_error=default_q_error,
+            q_error_mode=q_error_mode,
+        )
     else:
         raise ValueError(
-            f"'{filepath}' is a built-in Earth model name. "
-            "It can only provide 1D Vs/Q profiles, not full seismic model grids. "
-            "Use a .mat, .csv, or .nc file, or switch to 'manual' / 'locations_file' mode."
+            f"Cannot determine file type for '{filepath}'."
         )

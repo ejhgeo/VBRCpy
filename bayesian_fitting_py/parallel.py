@@ -12,7 +12,7 @@ from typing import Dict, Any, Tuple, Optional, List
 from .probability import probability_distributions
 from .prior import make_param_grid, prep_gs_lognormal, prior_model_probs
 from .fitting import extract_ml_estimates
-from .prior import MeltFractionPrior
+from .prior import MeltFractionPrior, TemperaturePrior
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +48,8 @@ def precompute_prior(
     sweep: Dict[str, Any],
     grain_size_prior,
     zero_melt: bool = False,
+    t_prior_mean_C: Optional[float] = None,
+    t_prior_std_C: Optional[float] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Build the prior probability grid (same for every location).
@@ -56,6 +58,10 @@ def precompute_prior(
     ----------
     zero_melt : bool
         If True, sharply suppress melt (phi peaked at 0).
+    t_prior_mean_C : float, optional
+        Mean temperature (°C) for a Gaussian T prior at a given depth.
+    t_prior_std_C : float, optional
+        Std dev (°C) for the Gaussian T prior.
 
     Returns (prior_statevars, params) without mutating sweep.
     """
@@ -81,6 +87,12 @@ def precompute_prior(
         params['phi_pdf_type'] = 'normal'
         params['phi_mean'] = 0.0
         params['phi_std'] = 0.001
+
+    # Apply temperature prior if requested
+    if t_prior_mean_C is not None and t_prior_std_C is not None:
+        params['T_pdf_type'] = 'normal'
+        params['T_mean'] = t_prior_mean_C
+        params['T_std'] = t_prior_std_C
 
     gs_lognormal = False
     if params.get('gs_pdf_type') in ['lognormal', 'uniform_log']:
@@ -309,6 +321,7 @@ def run_locations_parallel(
     use_vs: bool = True,
     use_q: bool = True,
     melt_fraction_prior: Optional[MeltFractionPrior] = None,
+    temperature_prior: Optional[TemperaturePrior] = None,
 ) -> List[Optional[Dict[str, Any]]]:
     """
     Process all locations for one anelastic method, optionally in parallel.
@@ -323,6 +336,8 @@ def run_locations_parallel(
         Whether Q observations should be used.
     melt_fraction_prior : MeltFractionPrior, optional
         Melt fraction prior configuration.
+    temperature_prior : TemperaturePrior, optional
+        Temperature prior configuration.
     """
     if not use_vs and not use_q:
         raise ValueError("At least one of use_vs or use_q must be True")
@@ -343,7 +358,7 @@ def run_locations_parallel(
             )
 
     # ------------------------------------------------------------------
-    # 2. Pre-compute the prior (same for all locations)
+    # 2. Pre-compute the prior(s)
     # ------------------------------------------------------------------
     melt_type = 'uniform'
     melt_onset_km = None
@@ -352,23 +367,65 @@ def run_locations_parallel(
     if melt_fraction_prior is not None:
         melt_type = melt_fraction_prior.phi_prior_type
 
-    if melt_type == 'zero_melt':
-        # Suppress melt everywhere
-        prior_statevars, params = precompute_prior(
-            sweep, grain_size_prior, zero_melt=True,
+    # Determine T prior parameters per unique depth
+    use_geotherm_t_prior = (
+        temperature_prior is not None
+        and temperature_prior.t_prior_type == 'geotherm'
+    )
+    t_mean_by_depth = {}  # depth_key → T_mean_C (or None)
+    t_std_C = None
+    if use_geotherm_t_prior:
+        from .vbr.thermal import load_geotherm
+        t_std_C = temperature_prior.geotherm_std_C
+        mid_depths = np.array([
+            (z_min + z_max) / 2.0 for z_min, z_max in unique_z
+        ])
+        _, t_vals = load_geotherm(
+            temperature_prior.geotherm_file, depth_km=mid_depths,
         )
-    elif melt_type == 'piecewise_depth':
-        # Need two priors: melt-allowed (above onset) and no-melt (below)
-        prior_statevars, params = precompute_prior(
-            sweep, grain_size_prior, zero_melt=False,
+        for (key, t_val) in zip(unique_z, t_vals):
+            t_mean_by_depth[key] = float(t_val)
+
+    def _build_prior(zero_melt=False, t_mean_C=None):
+        return precompute_prior(
+            sweep, grain_size_prior, zero_melt=zero_melt,
+            t_prior_mean_C=t_mean_C,
+            t_prior_std_C=t_std_C if t_mean_C is not None else None,
         )
-        prior_no_melt, _ = precompute_prior(
-            sweep, grain_size_prior, zero_melt=True,
-        )
-        melt_onset_km = melt_fraction_prior.onset_depth_km
+
+    if use_geotherm_t_prior:
+        # Per-depth priors (T mean varies by depth)
+        prior_by_depth = {}       # depth_key → prior array
+        prior_no_melt_by_depth = {}
+        for depth_key in unique_z:
+            t_mean = t_mean_by_depth[depth_key]
+            if melt_type == 'zero_melt':
+                prior_by_depth[depth_key], params = _build_prior(
+                    zero_melt=True, t_mean_C=t_mean,
+                )
+            elif melt_type == 'piecewise_depth':
+                prior_by_depth[depth_key], params = _build_prior(
+                    zero_melt=False, t_mean_C=t_mean,
+                )
+                prior_no_melt_by_depth[depth_key], _ = _build_prior(
+                    zero_melt=True, t_mean_C=t_mean,
+                )
+                melt_onset_km = melt_fraction_prior.onset_depth_km
+            else:
+                prior_by_depth[depth_key], params = _build_prior(
+                    t_mean_C=t_mean,
+                )
     else:
-        # uniform or temperature_dependent (no-op for now)
-        prior_statevars, params = precompute_prior(sweep, grain_size_prior)
+        # Single prior shared across all depths (original behavior)
+        prior_by_depth = None
+        if melt_type == 'zero_melt':
+            prior_statevars, params = _build_prior(zero_melt=True)
+        elif melt_type == 'piecewise_depth':
+            prior_statevars, params = _build_prior(zero_melt=False)
+            prior_no_melt, _ = _build_prior(zero_melt=True)
+            melt_onset_km = melt_fraction_prior.onset_depth_km
+        else:
+            prior_statevars, params = _build_prior()
 
     sweep_vectors = {
         'T': sweep['T'].copy(),
@@ -387,6 +444,14 @@ def run_locations_parallel(
         z_min, z_max = z_ranges[il]
         depth_key = (z_min, z_max)
         precomputed = unique_z[depth_key]
+
+        # Select the appropriate prior for this location's depth
+        if prior_by_depth is not None:
+            loc_prior = prior_by_depth[depth_key]
+            loc_prior_no_melt = prior_no_melt_by_depth.get(depth_key)
+        else:
+            loc_prior = prior_statevars
+            loc_prior_no_melt = prior_no_melt
 
         obs_vs = sigma_vs = obs_q = sigma_q = None
         depth_val = None
@@ -417,11 +482,11 @@ def run_locations_parallel(
             use_vs, use_q,
             obs_vs, sigma_vs, obs_q, sigma_q,
             depth_key, precomputed,
-            prior_statevars, sweep_vectors,
+            loc_prior, sweep_vectors,
             anelastic_method, config.save_ml_csv,
             has_depth_col, depth_val,
             config.default_vs_error, config.default_q_error,
-            prior_no_melt, melt_onset_km,
+            loc_prior_no_melt, melt_onset_km,
         ))
 
     # ------------------------------------------------------------------

@@ -20,9 +20,14 @@ built-in **multiprocessing support** for large-scale runs.
 pip install -e ./vbrc_V2Tpy
 ```
 
-This installs the package in **editable mode** so code changes take effect
-immediately without reinstalling.  Required dependencies (NumPy, SciPy,
-Matplotlib, PyYAML) are installed automatically.
+> **Important:** The `-e` (editable) flag is **required**, not optional.
+> Reference data files and downloaded datasets live outside the Python
+> package tree (in `data/`), so a regular `pip install` will not work.
+> The package checks for this at startup and will raise an error if
+> installed non-editably.
+
+Required dependencies (NumPy, SciPy, Matplotlib, PyYAML) are installed
+automatically.
 
 For optional CSV / NetCDF model loading:
 
@@ -71,19 +76,28 @@ python -m bayesian_fitting_py --list-methods
   via `include_direct_melt_effect` in sweep config
 - **Two elastic backends**: `anharmonic` (linear Taylor, olivine) and
   `cammarano2003` (finite-strain mineral physics with depth-dependent mineralogy)
+- **Geotherm-based temperature prior**: Gaussian prior centered on a reference
+  geotherm (e.g. SC2006 continental) with configurable σ, or flat uniform prior
+- **Built-in 1D Earth models**: `prem`, `prem_nocrust`, `stw105`, `stw105_nocrust`
+  usable as `vs_file`, `q_file`, `reference_model`, or `density_model`
+- **Run tagging**: `run_tag` organizes multiple inversion runs (different priors,
+  obs types, etc.) under the same sweep directory without overwriting results
 - **Parallel processing**: multiprocessing support for large-scale tomography runs
 - **Flexible input**: manual locations, or `model` mode with auto-detected format
   (.csv, .mat, .nc) via `vs_file` / `q_file`
 - **Pure-Python VBR calculator** — generate parameter sweeps without MATLAB
 - **MATLAB benchmark validation** — automated comparison against original VBRc output
-- **Publication-quality plots** with posterior PDFs, T–φ trade-offs, and ensemble summaries
+- **Publication-quality plots** with posterior PDFs, T–φ trade-offs, ensemble summaries,
+  and PyGMT map-view post-processing
 
 ## Project Layout
 
 ```
 vbrc_V2Tpy/
 ├── pyproject.toml                  # Package metadata & dependencies
+├── PROJECT_STATE.md                # Detailed project state for AI session bootstrap
 ├── data/                           # Fetched data files (git-ignored)
+│   └── reference_models/           # Bundled 1D Earth models & geotherms
 ├── config_example_*.yaml           # Example configuration files
 ├── validation/                     # Validation & testing framework
 │   ├── syntheticTest_geotherm/     # Geotherm-based validation (SC2006 continental)
@@ -93,13 +107,15 @@ vbrc_V2Tpy/
     ├── fitting.py                  # Fitting functions & ML estimation
     ├── parallel.py                 # Multiprocessing support for large-scale runs
     ├── data_processing.py          # Seismic data I/O (CSV, MAT, NetCDF)
-    ├── probability.py / prior.py   # Probability & prior functions
+    ├── prior.py                    # Prior probability (incl. geotherm T prior)
+    ├── probability.py              # Likelihood & posterior calculations
     ├── plotting.py                 # Visualisation
     ├── fetch_data.py               # Data download utility
     └── vbr/                        # Python VBR calculator
         ├── core.py                 # Elastic, viscous, anelastic calculations
+        ├── cammarano.py            # Finite-strain mineral physics (Cammarano 2003)
         ├── params.py               # Method parameter defaults
-        ├── thermal.py              # Solidus & thermal models
+        ├── thermal.py              # Solidus, thermal models, Earth model I/O
         ├── plot_lut.py             # Look-up table plotting & comparison
         └── generate_sweep.py       # Parameter sweep generation (incl. viscosity)
 ```

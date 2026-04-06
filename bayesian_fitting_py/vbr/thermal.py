@@ -15,10 +15,23 @@ from .params import C2K
 
 R_EARTH_M = 6371e3  # Earth radius in meters
 
+# Resolve the reference-models directory:
+# <package_root> = bayesian_fitting_py/  (parent of vbr/)
+# data lives at  <package_root>/../data/reference_models/
+_VBR_DIR = Path(__file__).resolve().parent           # bayesian_fitting_py/vbr/
+_REF_MODELS_DIR = _VBR_DIR.parent.parent / 'data' / 'reference_models'
+
 # Mapping of built-in Earth model names to filenames
 _BUILTIN_MODELS = {
     'prem': 'PREM_for_VBRc.txt',
+    'prem_nocrust': 'PREMnoCrust_for_VBRc.txt',
     'stw105': 'STW105_for_VBRc.txt',
+    'stw105_nocrust': 'STW105noCrust_for_VBRc.txt',
+}
+
+# Built-in geotherm files
+_BUILTIN_GEOTHERMS = {
+    'sc2006': 'SC2006_geotherm.csv',
 }
 
 
@@ -53,7 +66,7 @@ def _load_earth_model(
         preserved by applying a tiny depth offset to duplicates.
     """
     if model in _BUILTIN_MODELS:
-        filepath = Path(__file__).parent / _BUILTIN_MODELS[model]
+        filepath = _REF_MODELS_DIR / _BUILTIN_MODELS[model]
     elif model == 'custom':
         if custom_file is None:
             raise ValueError("density_file is required when density_model='custom'")
@@ -67,7 +80,7 @@ def _load_earth_model(
     # Read the 5-column space/whitespace-delimited file
     data = np.genfromtxt(filepath, names=True)
     # Columns: radius, depth, density, Vs, Qmu
-    depth_m = data['depth']
+    depth_m = data['depth'].astype(float).copy()
     density = data['density']
 
     # Gather any extra requested columns
@@ -76,31 +89,31 @@ def _load_earth_model(
         for fname in fields:
             extras_raw.append(data[fname])
 
+    # Preserve discontinuities: shift duplicate depths by a small epsilon
+    # *before* sorting so the file's natural ordering is retained.
+    # Files are pre-sorted by ascending depth with the shallow-side entry
+    # first at discontinuities, so shifting later duplicates by +epsilon
+    # places the deep-side values at the correct (slightly deeper) depth.
+    depth_eps_m = 100.0  # 0.1 km
+    i = 0
+    n = len(depth_m)
+    while i < n:
+        j = i + 1
+        while j < n and depth_m[j] == depth_m[i]:
+            j += 1
+        for k in range(1, j - i):
+            depth_m[i + k] = depth_m[i] + k * depth_eps_m
+        i = j
+
+    # Sort ascending by the (now-unique) depths
     sort_idx = np.argsort(depth_m)
     depth_m = depth_m[sort_idx]
     density = density[sort_idx]
     extras_raw = [arr[sort_idx] for arr in extras_raw]
 
-    # Preserve discontinuities: when duplicate depths occur (e.g., 410/410 km),
-    # shift later duplicates by a small epsilon instead of averaging values.
-    depth_eps_m = 100.0  # 0.1 km
-    depth_out = depth_m.astype(float).copy()
-    i = 0
-    n = len(depth_out)
-    while i < n:
-        j = i + 1
-        while j < n and depth_out[j] == depth_out[i]:
-            j += 1
-        count = j - i
-        if count > 1:
-            # Keep first as-is; shift each additional duplicate by +epsilon
-            for k in range(1, count):
-                depth_out[i + k] = depth_out[i] + k * depth_eps_m
-        i = j
-
     if fields:
-        return (depth_out, density, *extras_raw)
-    return depth_out, density
+        return (depth_m, density, *extras_raw)
+    return depth_m, density
 
 
 def load_q_from_earth_model(
@@ -157,6 +170,51 @@ def load_vs_from_earth_model(
     )
     depth_km_profile = depth_m / 1e3
     return np.interp(np.asarray(depth_km), depth_km_profile, vs)
+
+
+def load_geotherm(
+    name_or_file: str,
+    depth_km: Optional[np.ndarray] = None,
+) -> tuple:
+    """Load a geotherm profile and optionally interpolate to requested depths.
+
+    Parameters
+    ----------
+    name_or_file : str
+        A built-in geotherm name (``'sc2006'``) or a path to a CSV file
+        with columns ``depth_km`` and ``temperature_C``.
+    depth_km : array_like, optional
+        Depths in km at which to interpolate.  When *None*, returns the
+        raw profile from the file.
+
+    Returns
+    -------
+    tuple of (depth_km_arr, temperature_C_arr)
+        Depth (km) and temperature (°C) arrays.
+    """
+    key = name_or_file.lower().strip()
+    if key in _BUILTIN_GEOTHERMS:
+        filepath = _REF_MODELS_DIR / _BUILTIN_GEOTHERMS[key]
+    else:
+        filepath = Path(name_or_file)
+
+    if not filepath.exists():
+        valid = ', '.join([repr(k) for k in _BUILTIN_GEOTHERMS])
+        raise FileNotFoundError(
+            f"Geotherm file not found: {filepath}.  "
+            f"Built-in options: {valid}"
+        )
+
+    data = np.genfromtxt(filepath, delimiter=',', names=True)
+    z_prof = data['depth_km']
+    t_prof = data['temperature_C']
+
+    if depth_km is not None:
+        depth_km = np.asarray(depth_km)
+        t_interp = np.interp(depth_km, z_prof, t_prof)
+        return depth_km, t_interp
+
+    return z_prof, t_prof
 
 
 def solidus(

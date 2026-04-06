@@ -17,6 +17,22 @@ from .probability import probability_distributions
 
 
 @dataclass
+class TemperaturePrior:
+    """Configuration for temperature prior distribution.
+
+    t_prior_type options:
+      - 'uniform'      : flat prior over sweep T range (default / legacy)
+      - 'geotherm'     : Gaussian centred on a geotherm profile at each depth
+    """
+    t_prior_type: str = 'uniform'
+    # For geotherm: built-in name ('sc2006') or path to a CSV with
+    # columns ``depth_km,temperature_C``.
+    geotherm_file: str = 'sc2006'
+    # Standard deviation (°C) of the Gaussian around the geotherm.
+    geotherm_std_C: float = 200.0
+
+
+@dataclass
 class GrainSizePrior:
     """Configuration for grain size prior distribution."""
     gs_pdf_type: str = 'uniform'  # 'uniform', 'uniform_log', 'lognormal'
@@ -80,6 +96,35 @@ def apply_melt_fraction_prior(
 
     # Unknown type — warn and fall back to uniform
     print(f"Warning: unknown phi_prior_type '{ptype}', using uniform")
+
+
+def apply_temperature_prior(
+    params: Dict[str, Any],
+    t_prior: TemperaturePrior,
+    depth_km: Optional[float] = None,
+) -> None:
+    """Set T prior fields in *params* based on the temperature prior config.
+
+    For geotherm-based priors the caller must supply *depth_km* so the
+    expected temperature can be interpolated from the geotherm profile.
+    """
+    ptype = t_prior.t_prior_type
+
+    if ptype == 'uniform':
+        return
+
+    if ptype == 'geotherm':
+        if depth_km is None:
+            return  # cannot evaluate without a depth — fall back to uniform
+        from .vbr.thermal import load_geotherm
+        _, t_expected_C = load_geotherm(t_prior.geotherm_file,
+                                        depth_km=np.array([depth_km]))
+        params['T_pdf_type'] = 'normal'
+        params['T_mean'] = float(t_expected_C[0])
+        params['T_std'] = t_prior.geotherm_std_C
+        return
+
+    print(f"Warning: unknown t_prior_type '{ptype}', using uniform")
 
 
 def make_param_grid(

@@ -67,7 +67,7 @@ results = run_bayesian_inversion()
 
 # Or customize
 config = InversionConfig(
-    gs_prior_case='log_uniform',  # or 'log_normal_1mm', 'log_normal_1cm'
+    gs_prior_type='log_uniform',  # or 'log_normal'
     anelastic_methods=['xfit_premelt', 'eburgers_psp'],
     obs_types='VsQ',  # 'Vs', 'Q', or 'VsQ'
     output_dir='./my_output',
@@ -256,11 +256,14 @@ location_mode: manual
 
 # For model mode:
 # vs_file: ./model.csv     # or .mat or .nc  (Vs + locations)
-# q_file: ./q_model.csv    # optional separate Q file
+#   Can also be a built-in 1D model name: prem, prem_nocrust, stw105, stw105_nocrust
+# q_file: ./q_model.csv    # optional separate Q file (or built-in model name)
 # model_z_range: [100, 200]        # optional depth filter
 # model_subsample: 1               # use every Nth point
 # default_vs_error: 0.05           # default if not in file
 # default_q_error: 10.0            # default if not in file
+# q_error_mode: absolute           # 'absolute' (σ_Q = default_q_error) or
+#                                  # 'percent' (σ_Q = default_q_error/100 × Q_obs)
 
 # Locations (for manual mode)
 locations:
@@ -277,6 +280,8 @@ location_colors:
   - [0, 0.8, 0]
 
 # Data files
+# vs_file / q_file accept file paths (.mat, .csv, .nc) or built-in 1D model
+# names: prem, prem_nocrust, stw105, stw105_nocrust
 vs_file: ./data/vel_models/Shen_Ritzwoller_2016.mat
 q_file: ./data/Q_models/Dalton_Ekstrom_2008.mat
 sweep_file: ./data/plate_VBR/sweep_log_gs.mat
@@ -297,6 +302,18 @@ gs_prior_type: log_uniform
 # phi_onset_depth_km: 80.0  # for piecewise_depth: depth below which melt is suppressed
 phi_prior_type: uniform
 
+# Temperature prior
+# t_prior_type: uniform (default, flat) or geotherm (Gaussian centred on a
+#   reference geotherm at each depth)
+# geotherm_file: sc2006  # built-in name or path to CSV (depth_km, temperature_C)
+# geotherm_std_C: 200.0  # Gaussian σ in °C (for geotherm mode)
+# t_prior_type: uniform
+
+# Q error mode: how default_q_error is interpreted
+# 'absolute' (default): σ_Q = default_q_error
+# 'percent': σ_Q = (default_q_error / 100) × Q_obs
+# q_error_mode: absolute
+
 # Observations: Vs, Q, or VsQ
 obs_types: VsQ
 
@@ -304,6 +321,15 @@ obs_types: VsQ
 output_dir: plots/output_plots
 save_plots: true
 save_ml_csv: false
+
+# Run tagging: controls the inversion output subdirectory name.
+#   'none' — plain 'inversion_results' (default, backward compatible)
+#   'auto' — auto-generate a compact tag from inversion parameters
+#   <str>  — use 'inversion_<str>' as the subdirectory name
+# run_tag: none
+
+# Reference Earth model for comparison plots (built-in name or file path)
+# reference_model: stw105_nocrust
 
 # Parallelization (for large-scale runs)
 # 0 = auto (all cores), 1 = sequential (default), N = N workers
@@ -357,7 +383,7 @@ bayesian_fitting_py/
 ├── parallel.py          # Multiprocessing support for large-scale runs
 ├── data_processing.py   # Seismic data loading and processing
 ├── probability.py       # Probability distribution functions
-├── prior.py             # Prior probability calculations
+├── prior.py             # Prior probability calculations (incl. geotherm T prior)
 ├── plotting.py          # Visualization functions
 ├── fetch_data.py        # Data fetching utilities
 ├── requirements.txt     # Python dependencies
@@ -365,9 +391,11 @@ bayesian_fitting_py/
 └── vbr/                 # VBR calculator (Python translation)
     ├── __init__.py       # VBR module exports
     ├── core.py           # Main VBR calculation engine (elastic, viscous, anelastic)
+    ├── cammarano.py      # Cammarano et al. (2003) finite-strain mineral physics
     ├── params.py         # Parameter classes for all methods
-    ├── thermal.py        # Solidus and thermal calculations
-    └── generate_sweep.py # Parameter sweep generation and I/O (incl. viscosity)
+    ├── thermal.py        # Solidus, thermal calcs, Earth model & geotherm I/O
+    ├── generate_sweep.py # Parameter sweep generation and I/O (incl. viscosity)
+    └── plot_lut.py       # Look-up table plotting & comparison
 ```
 
 ## VBR Calculator (Python Translation)
@@ -448,6 +476,31 @@ anelastic_methods:
   - eburgers_psp
   - xfit_premelt
 
+# Elastic method: 'anharmonic' (linear Taylor expansion, olivine-based) or
+# 'cammarano2003' (finite-strain mineral physics, depth-dependent mineralogy)
+elastic_method: anharmonic
+
+# Viscous method for stored viscosity:
+# 'HK2003' (Hirth & Kohlstedt 2003 composite) or 'xfit_premelt' (Yamauchi & Takei 2016)
+viscous_method: HK2003
+
+# Density model: 'constant' (uniform rho), 'prem', 'prem_nocrust',
+# 'stw105', 'stw105_nocrust', or 'custom' (requires density_file)
+density_model: constant
+# density_file: /path/to/custom_model.txt  # for density_model: custom
+
+# Reference Earth model for profile comparison plots
+# (built-in name or file path; used by runner scripts, not the core inversion)
+# reference_model: stw105_nocrust
+
+# Solidus method: 'hirschmann', 'katz', or 'yk2001'
+solidus_method: hirschmann
+
+# xfit_premelt direct melt effect mode:
+# 0 = YT2016 (poroelastic via external anh_poro only, default)
+# 1 = YT2024 (direct melt effects on anelasticity)
+include_direct_melt_effect: 0
+
 # Output file
 output_file: sweep_custom.mat
 ```
@@ -519,7 +572,8 @@ print(f"Eta (xfit_premelt): {results.viscous['xfit_premelt']['eta']} Pa·s")
 ### Available Methods
 
 **Elastic Methods:**
-- `anharmonic`: Temperature and pressure scaling (Isaak 1992, Cammarano 2003)
+- `anharmonic`: Linear Taylor expansion with olivine parameters (Isaak 1992, Cammarano 2003). Suitable for upper mantle.
+- `cammarano2003`: Finite-strain mineral physics with depth-dependent mineralogy (Cammarano et al. 2003). Suitable for upper mantle through lower mantle.
 - `anh_poro`: Poro-elastic melt effect (poroelastic reduction of shear modulus)
 
 **Anelastic Methods:**
@@ -534,12 +588,18 @@ print(f"Eta (xfit_premelt): {results.viscous['xfit_premelt']['eta']} Pa·s")
 
 ### Solidus Calculations
 
+Configurable via `solidus_method` in the sweep config:
+- `hirschmann`: Hirschmann (2000) — default
+- `katz`: Katz et al. (2003)
+- `yk2001`: Yasuda & Karato (2001) — uses depth-dependent pressure from earth model
+
 ```python
 from bayesian_fitting_py.vbr.thermal import solidus, calculate_solidus_K
 
 # Calculate solidus at a given pressure
 T_sol = solidus(P_GPa=2.0, method='katz')  # Katz et al. 2003
 T_sol = solidus(P_GPa=2.0, method='hirschmann')  # Hirschmann 2000
+T_sol = solidus(P_GPa=2.0, method='yk2001')  # Yasuda & Karato 2001
 
 # With volatile depression
 T_sol_wet = calculate_solidus_K(
@@ -602,6 +662,30 @@ Example YAML:
 ```yaml
 phi_prior_type: piecewise_depth
 phi_onset_depth_km: 80.0    # melt allowed above 80 km, suppressed below
+```
+
+## Temperature Priors
+
+Configurable via `t_prior_type` and related fields:
+- `uniform`: Flat prior over the sweep temperature range (default)
+- `geotherm`: Gaussian prior centred on a reference geotherm at each depth,
+  with standard deviation `geotherm_std_C` (°C).  This constrains the
+  inversion toward geophysically reasonable temperatures, particularly
+  useful in the lithospheric mantle where Vs deficits can otherwise drive
+  unrealistically high temperature estimates.
+
+Built-in geotherms:
+- `sc2006`: Stixrude & Lithgow-Bertelloni (2006) continental geotherm (0–3000 km)
+
+A custom geotherm can be supplied as a CSV file with columns `depth_km` and
+`temperature_C`.  Values are linearly interpolated to the midpoint of each
+depth range.
+
+Example YAML:
+```yaml
+t_prior_type: geotherm
+geotherm_file: sc2006        # or path/to/custom_geotherm.csv
+geotherm_std_C: 200.0        # Gaussian σ in °C
 ```
 
 ## Original MATLAB Code

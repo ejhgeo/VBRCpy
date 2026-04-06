@@ -233,6 +233,12 @@ def pyrolite_assemblage(
             (get_mineral_properties('clinopyroxene',  X_Fe=X_Fe), 0.14),
             (get_mineral_properties('garnet', X_Fe=X_Fe, X_Alm=0.10, X_Mj=0.0), 0.14),
         ]
+        # return [
+        #     (get_mineral_properties('olivine',        X_Fe=X_Fe), 0.56),
+        #     (get_mineral_properties('orthopyroxene',  X_Fe=X_Fe), 0.17),
+        #     (get_mineral_properties('clinopyroxene',  X_Fe=X_Fe), 0.14),
+        #     (get_mineral_properties('garnet', X_Fe=X_Fe, X_Alm=0.10, X_Mj=0.0), 0.13),
+        # ]
     elif P_GPa < 18.0:
         # Transition zone – wadsleyite field (~410–520 km)
         return [

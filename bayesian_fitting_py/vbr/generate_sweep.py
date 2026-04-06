@@ -92,6 +92,12 @@ class SweepParams:
         Water content in ppm (default: 0)
     anelastic_methods : list of str
         Anelastic methods to calculate (default: all available)
+    viscous_method : str
+        Viscous flow law for stored viscosity: 'HK2003' (Hirth & Kohlstedt
+        2003, diffusion+dislocation+GBS) or 'xfit_premelt' (Yamauchi & Takei
+        2016 diffusion creep).  Default: 'HK2003'.  Note: the xfit_premelt
+        *anelastic* Q calculation always uses its own viscosity internally
+        regardless of this setting.
     eburgers_method : str
         eBurgers calculation method: 'PointWise' or 'FastBurger' (default: 'PointWise')
     gs_type : str
@@ -132,13 +138,14 @@ class SweepParams:
     freq_log_min: float = -2.2  # log10(f_min)
     freq_log_max: float = -1.3  # log10(f_max)
     rho: float = 3300.0
-    density_model: str = 'constant'  # 'constant', 'prem', 'stw105', or 'custom'
+    density_model: str = 'constant'  # 'constant', 'prem', 'prem_nocrust', 'stw105', or 'custom'
     density_file: Optional[str] = None  # path to custom density CSV
     sig_MPa: float = 0.1
     Ch2o: float = 0.0
     anelastic_methods: List[str] = field(default_factory=lambda: [
         'eburgers_psp', 'andrade_psp', 'xfit_mxw', 'xfit_premelt'
     ])
+    viscous_method: str = 'HK2003'  # Options: 'HK2003', 'xfit_premelt'
     eburgers_method: str = 'FastBurger'
     # xfit_premelt melt effect mode:
     # 0 = YT2016 (poroelastic via external anh_poro only, default)
@@ -361,12 +368,19 @@ def generate_parameter_sweep(
         else:
             elastic_methods = [base_elastic]
         
+        # Build viscous methods list: always include the user's chosen method,
+        # plus xfit_premelt if its anelastic method is requested (it needs its
+        # own viscosity internally for Q calculation).
+        viscous_methods_list = [params.viscous_method]
+        if 'xfit_premelt' in params.anelastic_methods and 'xfit_premelt' not in viscous_methods_list:
+            viscous_methods_list.append('xfit_premelt')
+
         # Run VBR
         vbr = VBR(
             sv,
             elastic_methods=elastic_methods,
             anelastic_methods=params.anelastic_methods,
-            viscous_methods=['HK2003', 'xfit_premelt'] if 'xfit_premelt' in params.anelastic_methods else ['HK2003'],
+            viscous_methods=viscous_methods_list,
         )
         
         # Set elastic scaling options (only relevant for anharmonic method)
@@ -385,17 +399,24 @@ def generate_parameter_sweep(
         
         vbr.run()
         
-        # Extract mean Vs, Q, and viscosity for each method
-        # Use method-consistent viscosity: xfit_premelt eta for xfit_premelt,
-        # HK2003 eta_total as fallback for other methods.
-        eta_hk2003 = None
-        if 'HK2003' in vbr.output.get('viscous', {}):
-            eta_hk2003 = vbr.output['viscous']['HK2003']['eta_total']  # (nT, nphi, ngs)
-        
-        eta_xfit = None
-        if 'xfit_premelt' in vbr.output.get('viscous', {}):
-            eta_xfit = vbr.output['viscous']['xfit_premelt']['diff']['eta']  # (nT, nphi, ngs)
-        
+        # Extract mean Vs, Q, and viscosity for each method.
+        # Stored viscosity uses the user's chosen viscous_method for all
+        # anelastic methods.  (xfit_premelt Q always uses its own viscosity
+        # internally regardless of this setting.)
+        vm = params.viscous_method
+        if vm == 'HK2003' and 'HK2003' in vbr.output.get('viscous', {}):
+            eta_store = vbr.output['viscous']['HK2003']['eta_total']
+        elif vm == 'xfit_premelt' and 'xfit_premelt' in vbr.output.get('viscous', {}):
+            eta_store = vbr.output['viscous']['xfit_premelt']['diff']['eta']
+        else:
+            # Fallback: try HK2003, then xfit_premelt
+            if 'HK2003' in vbr.output.get('viscous', {}):
+                eta_store = vbr.output['viscous']['HK2003']['eta_total']
+            elif 'xfit_premelt' in vbr.output.get('viscous', {}):
+                eta_store = vbr.output['viscous']['xfit_premelt']['diff']['eta']
+            else:
+                eta_store = None
+
         for method in params.anelastic_methods:
             if method in vbr.output['anelastic']:
                 result = vbr.output['anelastic'][method]
@@ -407,12 +428,9 @@ def generate_parameter_sweep(
                 Box[method]['meanVs'][:, :, :, i_P] = np.mean(V, axis=-1)
                 Box[method]['meanQ'][:, :, :, i_P] = np.mean(Q, axis=-1)
                 
-                # Viscosity (Pa·s) — use the viscosity model consistent with
-                # the anelastic method to avoid comparing different rheologies.
-                if method == 'xfit_premelt' and eta_xfit is not None:
-                    Box[method]['meanEta'][:, :, :, i_P] = eta_xfit
-                elif eta_hk2003 is not None:
-                    Box[method]['meanEta'][:, :, :, i_P] = eta_hk2003
+                # Viscosity (Pa·s) — same viscous model for all methods
+                if eta_store is not None:
+                    Box[method]['meanEta'][:, :, :, i_P] = eta_store
         
         step_time = time.time() - step_start
         if verbose:
@@ -814,6 +832,10 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         - eburgers_psp
         - andrade_psp
         - xfit_premelt
+      # Viscous method for stored viscosity profiles:
+      # 'HK2003' (Hirth & Kohlstedt 2003, default) or 'xfit_premelt' (YT2016)
+      # Note: xfit_premelt Q always uses its own viscosity internally.
+      viscous_method: HK2003
       eburgers_method: FastBurger  # or 'PointWise'
       # xfit_premelt direct melt effect (Yamauchi & Takei 2024):
       #   0 = YT2016 mode (poroelastic effect via external anh_poro only, default)
@@ -917,6 +939,7 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
     
     # Parse methods
     anelastic_methods = cfg.get('anelastic_methods', ['eburgers_psp', 'andrade_psp', 'xfit_mxw', 'xfit_premelt'])
+    viscous_method = cfg.get('viscous_method', 'HK2003')
     eburgers_method = cfg.get('eburgers_method', 'FastBurger')
     include_direct_melt_effect = cfg.get('include_direct_melt_effect', 0)
     solidus_method = cfg.get('solidus_method', 'hirschmann')
@@ -970,6 +993,7 @@ def load_sweep_params_from_yaml(config_file: str) -> SweepParams:
         sig_MPa=sig_MPa,
         Ch2o=Ch2o,
         anelastic_methods=anelastic_methods,
+        viscous_method=viscous_method,
         eburgers_method=eburgers_method,
         include_direct_melt_effect=include_direct_melt_effect,
         gs_type=gs_type,

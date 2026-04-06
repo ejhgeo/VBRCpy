@@ -12,7 +12,8 @@ import numpy as np
 from scipy.io import loadmat
 from typing import Dict, Any, Tuple, Optional
 
-from .prior import GrainSizePrior, MeltFractionPrior, apply_melt_fraction_prior
+from .prior import GrainSizePrior, MeltFractionPrior, TemperaturePrior
+from .prior import apply_melt_fraction_prior, apply_temperature_prior
 from .data_processing import (
     Location,
     process_seismic_models,
@@ -204,6 +205,7 @@ def fit_seismic_observations(
     sweep: Optional[Dict[str, Any]] = None,
     sweep_file: str = 'data/plate_VBR/sweep_log_gs.mat',
     melt_fraction_prior: Optional[MeltFractionPrior] = None,
+    temperature_prior: Optional[TemperaturePrior] = None,
     obs_vs_override: Optional[float] = None,
     sigma_vs_override: Optional[float] = None,
     obs_q_override: Optional[float] = None,
@@ -314,9 +316,13 @@ def fit_seismic_observations(
         params['gs_pdf_type'] = grain_size_prior.gs_pdf_type
     
     # Apply melt fraction prior
+    depth_km = (location.z_min + location.z_max) / 2.0
     if melt_fraction_prior is not None:
-        depth_km = (location.z_min + location.z_max) / 2.0
         apply_melt_fraction_prior(params, melt_fraction_prior, depth_km=depth_km)
+
+    # Apply temperature prior (depth-dependent geotherm)
+    if temperature_prior is not None:
+        apply_temperature_prior(params, temperature_prior, depth_km=depth_km)
 
     # Handle lognormal grain size prior
     gs_lognormal = False
@@ -398,6 +404,7 @@ def fit_preloaded_observations(
     sweep: Optional[Dict[str, Any]] = None,
     sweep_file: str = 'data/plate_VBR/sweep_log_gs.mat',
     melt_fraction_prior: Optional[MeltFractionPrior] = None,
+    temperature_prior: Optional[TemperaturePrior] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Fit pre-loaded seismic observations to state variables using VBR.
@@ -493,9 +500,13 @@ def fit_preloaded_observations(
         params['gs_pdf_type'] = grain_size_prior.gs_pdf_type
     
     # Apply melt fraction prior
+    depth_km = (z_min + z_max) / 2.0
     if melt_fraction_prior is not None:
-        depth_km = (z_min + z_max) / 2.0
         apply_melt_fraction_prior(params, melt_fraction_prior, depth_km=depth_km)
+
+    # Apply temperature prior (depth-dependent geotherm)
+    if temperature_prior is not None:
+        apply_temperature_prior(params, temperature_prior, depth_km=depth_km)
 
     # Handle lognormal grain size prior
     gs_lognormal = False
