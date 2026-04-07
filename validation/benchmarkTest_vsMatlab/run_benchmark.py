@@ -25,9 +25,6 @@ Steps
 
 import os
 import sys
-import json
-import hashlib
-import subprocess
 import numpy as np
 import scipy.io as sio
 import yaml
@@ -56,38 +53,10 @@ METHODS = ['andrade_psp', 'eburgers_psp', 'xfit_mxw', 'xfit_premelt']
 # Fixed pressures at which to always plot comparison LUTs
 LUT_P_GPA_FIXED = [2.0]
 
-
-# ===================================================================
-# Sweep config fingerprinting
-# ===================================================================
-def _config_fingerprint(config_path):
-    """SHA-256 hash of only the sweep_generation section of the config.
-
-    Ignores inversion-only parameters so that changing priors or output
-    settings does not trigger unnecessary sweep regeneration.
-    """
-    import json as _json
-    with open(config_path, 'r') as f:
-        cfg = yaml.safe_load(f)
-    section = cfg.get('sweep_generation', {})
-    return hashlib.sha256(_json.dumps(section, sort_keys=True).encode()).hexdigest()
-
-
-def _sweep_needs_regeneration():
-    if not os.path.isfile(SWEEP_FILE):
-        return True
-    if not os.path.isfile(SWEEP_FINGERPRINT):
-        return True
-    current = _config_fingerprint(CONFIG_FILE)
-    with open(SWEEP_FINGERPRINT, 'r') as f:
-        saved = json.load(f).get('hash')
-    return current != saved
-
-
-def _save_sweep_fingerprint():
-    fp = _config_fingerprint(CONFIG_FILE)
-    with open(SWEEP_FINGERPRINT, 'w') as f:
-        json.dump({'hash': fp, 'config': CONFIG_FILE}, f)
+sys.path.insert(0, REPO_ROOT)
+from vbrc_V2Tpy.bayesian_fitting_py.orchestration import (
+    run_sweep_step, run_inversion_step,
+)
 
 
 # ===================================================================
@@ -339,8 +308,6 @@ def main():
     os.chdir(REPO_ROOT)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    python = sys.executable
-
     # Verify MATLAB reference exists
     if not os.path.isfile(MATLAB_SWEEP):
         print(f"ERROR: MATLAB reference sweep not found: {MATLAB_SWEEP}")
@@ -353,21 +320,7 @@ def main():
     print("=" * 70)
     print("STEP 1: Generate parameter sweep (look-up table)")
     print("=" * 70, flush=True)
-    if _sweep_needs_regeneration():
-        if os.path.isfile(SWEEP_FILE):
-            print("  Sweep config changed — regenerating ...")
-        from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import (
-            load_sweep_params_from_yaml as _lspy,
-            generate_parameter_sweep as _gps,
-            save_sweep as _ss,
-        )
-        _params = _lspy(CONFIG_FILE)
-        _params.output_file = SWEEP_FILE
-        _sweep = _gps(_params)
-        _ss(_sweep, _params.output_file)
-        _save_sweep_fingerprint()
-    else:
-        print(f"  Sweep up-to-date at {SWEEP_FILE} — skipping generation.")
+    run_sweep_step(CONFIG_FILE, SWEEP_FILE, OUTPUT_DIR, SWEEP_FINGERPRINT)
 
     # ------------------------------------------------------------------
     # Step 2: Numerical comparison against MATLAB
@@ -396,15 +349,7 @@ def main():
     print("=" * 70)
     print("STEP 4: Bayesian inversion (3 manual locations, 4 methods)")
     print("=" * 70, flush=True)
-    cmd = [
-        python, '-m',
-        'vbrc_V2Tpy.bayesian_fitting_py',
-        '--config', CONFIG_FILE,
-        '--sweep-file', SWEEP_FILE,
-        '--output-dir', INVERSION_DIR,
-    ]
-    print(f"  Running: {' '.join(cmd)}\n", flush=True)
-    subprocess.run(cmd, check=True)
+    run_inversion_step(CONFIG_FILE, SWEEP_FILE, INVERSION_DIR)
 
     # ------------------------------------------------------------------
     # Done

@@ -1004,7 +1004,11 @@ def load_seismic_model_from_csv(
             q_val = float(row['q'])
             q_list.append(q_val)
             if has_q_err:
-                q_err_list.append(float(row['q_error']))
+                file_q_err = float(row['q_error'])
+                if q_error_mode == 'percent':
+                    q_err_list.append(q_val * file_q_err / 100.0)
+                else:
+                    q_err_list.append(file_q_err)
             elif q_error_mode == 'percent':
                 q_err_list.append(q_val * default_q_error / 100.0)
             else:
@@ -1315,14 +1319,17 @@ def load_seismic_model_from_mat(
             z_range_pt = depth_to_range.get(depth, (depth - 2.5, depth + 2.5))
             z_ranges.append(z_range_pt)
         
-        # Set default errors if not provided
+        # Set default errors if not provided; apply percent mode if configured
         if vs_data is not None and vs_err is None:
             vs_err = np.full(len(vs_data), default_vs_error)
-        if q_data is not None and q_err is None:
-            if q_error_mode == 'percent':
-                q_err = q_data * default_q_error / 100.0
-            else:
-                q_err = np.full(len(q_data), default_q_error)
+        if q_data is not None:
+            if q_err is None:
+                if q_error_mode == 'percent':
+                    q_err = q_data * default_q_error / 100.0
+                else:
+                    q_err = np.full(len(q_data), default_q_error)
+            elif q_error_mode == 'percent':
+                q_err = q_data * q_err / 100.0
         
         print(f"Loaded {len(locations)} points from {filepath}")
         print(f"  Depth range: {min(depth_list):.1f} to {max(depth_list):.1f} km")

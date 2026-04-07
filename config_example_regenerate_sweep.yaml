@@ -40,7 +40,7 @@ sweep_generation:
   # --------------------------------------------------------------------------
   grain_size:
     min: 100      # 0.1 mm
-    max: 30000    # 50 mm
+    max: 30000    # 30 mm
     n_points: 25
     type: log     # logarithmic spacing
 
@@ -115,6 +115,22 @@ sweep_generation:
   density_model: prem
   rho: 3300.0              # kg/m^3 (used only when density_model is 'constant')
   # density_file: /path/to/custom_model.txt  # required when density_model is 'custom'
+
+  # --------------------------------------------------------------------------
+  # Solidus method
+  # --------------------------------------------------------------------------
+  # Options:
+  #   'hirschmann' - Hirschmann (2000) dry peridotite solidus (default)
+  #   'katz'       - Katz et al. (2003), supports H2O/CO2 depression
+  #   'yk2001'     - Yamazaki & Karato (2001) depth-dependent solidus
+  solidus_method: hirschmann
+
+  # --------------------------------------------------------------------------
+  # Reference Earth model (for profile comparison plots in runner scripts)
+  # --------------------------------------------------------------------------
+  # Built-in names: 'prem', 'prem_nocrust', 'stw105', 'stw105_nocrust'
+  # Or a path to a custom file with columns: radius depth density Vs Qmu
+  # reference_model: stw105_nocrust
 
   # --------------------------------------------------------------------------
   # Other parameters (optional)

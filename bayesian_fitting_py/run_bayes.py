@@ -135,7 +135,7 @@ class InversionConfig:
     )
     
     # Grain size prior configuration
-    # gs_prior_type: 'log_uniform' (flat in log-space) or 'log_normal'
+    # gs_prior_type: 'log_uniform' or 'uniform' (flat in log-space) or 'log_normal'
     gs_prior_type: str = 'log_uniform'
     # For log_normal: mean grain size in mm (e.g. 0.1, 1.0, 4.0, 10.0)
     gs_prior_mean_mm: Optional[float] = None
@@ -694,6 +694,7 @@ def run_bayesian_inversion(
     
     # Determine if this is a large-scale run (affects output behavior)
     large_scale_run = n_locations > 20
+    n_errors = 0  # track skipped locations
     if large_scale_run:
         n_methods = len(config.anelastic_methods)
         n_plotted_locs = len(range(0, n_locations, max(1, config.plot_every_n)))
@@ -802,6 +803,8 @@ def run_bayesian_inversion(
             print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")
 
             # Collect results back into the same data structures
+            n_par_errors = sum(1 for r in par_results if r is None)
+            n_errors += n_par_errors
             for res in par_results:
                 if res is None:
                     continue
@@ -942,6 +945,7 @@ def run_bayesian_inversion(
                             sigma_q_override=sq_ovr,
                         )
             except Exception as e:
+                n_errors += 1
                 if not large_scale_run:
                     print(f"        Error fitting {locname}: {e}")
                 continue
@@ -1100,6 +1104,9 @@ def run_bayesian_inversion(
         )
     
     # Print ML estimates summary (abbreviated for large runs)
+    if n_errors > 0:
+        print(f"\nWarning: {n_errors} location(s) skipped due to errors "
+              f"(out of {n_locations} total).")
     print_ml_summary(ml_estimates, ensemble_ml_estimates, config, names, large_scale_run)
     
     # Package results
@@ -1115,40 +1122,18 @@ def run_bayesian_inversion(
         'z_ranges': z_ranges,
     }
     
-    # Save ML estimates to CSV if requested (save to current working directory)
+    # Save ML estimates to split CSV files if requested
     if config.save_ml_csv and ml_records:
-        import csv
-        # If user set ml_csv_file explicitly, use that; otherwise put it
-        # inside output_dir so the user only needs to specify output_dir.
+        from .io import write_split_ml_csv
+        # If user set ml_csv_file explicitly, use that directory;
+        # otherwise write into inversion_dir/ml_estimates/
         if config.ml_csv_file:
-            csv_path = config.ml_csv_file
+            est_parent = os.path.dirname(os.path.abspath(config.ml_csv_file))
         else:
-            csv_path = os.path.join(inversion_dir, 'ml_estimates.csv')
-        os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
-        
-        # Get all field names from the records
-        fieldnames = list(ml_records[0].keys())
-        
-        # Format floating point values to 3 decimal places or scientific notation
-        def format_value(v):
-            if isinstance(v, float):
-                if abs(v) < 0.001 and v != 0:
-                    return f'{v:.3e}'
-                else:
-                    return f'{v:.3f}'
-            return v
-        
-        formatted_records = [
-            {k: format_value(v) for k, v in record.items()}
-            for record in ml_records
-        ]
-        
-        with open(csv_path, 'w', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(formatted_records)
-        
-        print(f"\nML estimates saved to {csv_path}")
+            est_parent = inversion_dir
+        written = write_split_ml_csv(ml_records, est_parent)
+        est_dir = os.path.join(est_parent, 'ml_estimates')
+        print(f"\nML estimates saved to {est_dir}/ ({len(written)} files)")
     
     # Save results to pickle
     save_path = os.path.join(inversion_dir, f'{fig_prefix_dir}_ensembles.pkl')
@@ -1369,8 +1354,8 @@ Examples:
     )
     parser.add_argument(
         '--gs-prior', type=str, default=None,
-        choices=['log_uniform', 'log_normal'],
-        help='Grain size prior type: log_uniform or log_normal'
+        choices=['log_uniform', 'uniform', 'log_normal'],
+        help='Grain size prior type: log_uniform (default), uniform (alias for log_uniform), or log_normal'
     )
     parser.add_argument(
         '--gs-prior-mean-mm', type=float, default=None,

@@ -14,7 +14,16 @@ built-in **multiprocessing support** for large-scale runs.
 
 ## Quick Start
 
-### 1. Install
+### 1. Environment Setup
+
+Create a conda environment with all required packages (including plotting):
+
+```bash
+conda create -n vbrc_v2t -c conda-forge python=3.12 numpy scipy matplotlib pyyaml pandas xarray netcdf4 pygmt
+conda activate vbrc_v2t
+```
+
+### 2. Install
 
 ```bash
 pip install -e ./vbrc_V2Tpy
@@ -26,16 +35,7 @@ pip install -e ./vbrc_V2Tpy
 > The package checks for this at startup and will raise an error if
 > installed non-editably.
 
-Required dependencies (NumPy, SciPy, Matplotlib, PyYAML) are installed
-automatically.
-
-For optional CSV / NetCDF model loading:
-
-```bash
-pip install -e "./vbrc_V2Tpy[full]"
-```
-
-### 2. Fetch Data
+### 3. Fetch Data
 
 The inversion requires pre-computed VBR sweep data and seismic observations
 (~180 MB).  After installing, run:
@@ -49,7 +49,7 @@ python -m bayesian_fitting_py.fetch_data -y   # skip prompt
 Data is placed in `vbrc_V2Tpy/data/` by default.  Use `--data-dir` to choose
 a different location.
 
-### 3. Run
+### 4. Run
 
 ```bash
 # Default inversion (Vs + Q, all methods, log-uniform grain-size prior)
@@ -77,7 +77,7 @@ python -m bayesian_fitting_py --list-methods
 - **Two elastic backends**: `anharmonic` (linear Taylor, olivine) and
   `cammarano2003` (finite-strain mineral physics with depth-dependent mineralogy)
 - **Geotherm-based temperature prior**: Gaussian prior centered on a reference
-  geotherm (e.g. SC2006 continental) with configurable σ, or flat uniform prior
+  geotherm (e.g. Steinberger & Calderwood 2006 continental) with configurable σ, or flat uniform prior
 - **Built-in 1D Earth models**: `prem`, `prem_nocrust`, `stw105`, `stw105_nocrust`
   usable as `vs_file`, `q_file`, `reference_model`, or `density_model`
 - **Run tagging**: `run_tag` organizes multiple inversion runs (different priors,
@@ -110,10 +110,12 @@ vbrc_V2Tpy/
     ├── prior.py                    # Prior probability (incl. geotherm T prior)
     ├── probability.py              # Likelihood & posterior calculations
     ├── plotting.py                 # Visualisation
+    ├── orchestration.py            # Reusable sweep/inversion workflow helpers
+    ├── io.py                       # Split-file CSV I/O for ML estimates
     ├── fetch_data.py               # Data download utility
     └── vbr/                        # Python VBR calculator
         ├── core.py                 # Elastic, viscous, anelastic calculations
-        ├── cammarano.py            # Finite-strain mineral physics (Cammarano 2003)
+        ├── cammarano.py            # Finite-strain mineral physics (Cammarano et al., 2003)
         ├── params.py               # Method parameter defaults
         ├── thermal.py              # Solidus, thermal models, Earth model I/O
         ├── plot_lut.py             # Look-up table plotting & comparison
@@ -139,7 +141,7 @@ cd /Users/ehightow/Research/V2T_Inversion
 # Benchmark: compare Python vs MATLAB VBRc (sweep comparison, LUT plots, inversion)
 python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
 
-# Synthetic geotherm test (SC2006 continental geotherm, configurable grain size)
+# Synthetic geotherm test (Steinberger & Calderwood 2006 geotherm, configurable grain size)
 python -m vbrc_V2Tpy.validation.syntheticTest_geotherm
 python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --gs-um 800
 
@@ -148,7 +150,7 @@ python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --replot-lut
 ```
 
 The synthetic geotherm test uses an independent VBR core computation (not grid
-lookup) to generate observations from a realistic continental geotherm (SC2006),
+lookup) to generate observations from a realistic continental geotherm (Steinberger & Calderwood, 2006),
 avoiding the "inverse crime" of inverting on the same grid used to generate the
 data.  It includes a cold lithospheric lid, thermal boundary layer, and
 convecting interior.  See

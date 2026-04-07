@@ -3,7 +3,7 @@
 Geotherm round-trip validation example.
 
 Same workflow as syntheticTest_adiabat, but uses a prescribed geotherm
-(SC2006_geotherm.csv — Stixrude & Lithgow-Bertelloni 2006 or similar)
+(SC2006_geotherm.csv — Steinberger & Calderwood, 2006)
 instead of a simple mantle adiabat for the true temperature profile.
 
   1. Generate a parameter sweep (look-up table) from a YAML config.
@@ -21,9 +21,6 @@ From the repository root::
 import argparse
 import os
 import sys
-import json
-import hashlib
-import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 import yaml
@@ -48,40 +45,10 @@ SWEEP_FINGERPRINT = os.path.join(OUTPUT_DIR, 'sweep_fingerprint.json')
 SYNTH_CSV        = os.path.join(OUTPUT_DIR, 'synthetic_observations.csv')
 INVERSION_DIR    = os.path.join(OUTPUT_DIR, 'inversion_results')
 
-
-# ===================================================================
-# Sweep config fingerprinting
-# ===================================================================
-def _config_fingerprint(config_path):
-    """SHA-256 hash of only the sweep_generation section of the config.
-
-    Ignores inversion-only parameters so that changing priors or output
-    settings does not trigger unnecessary sweep regeneration.
-    """
-    import json as _json
-    with open(config_path, 'r') as f:
-        cfg = yaml.safe_load(f)
-    section = cfg.get('sweep_generation', {})
-    return hashlib.sha256(_json.dumps(section, sort_keys=True).encode()).hexdigest()
-
-
-def _sweep_needs_regeneration():
-    """Return True if the sweep must be (re)generated."""
-    if not os.path.isfile(SWEEP_FILE):
-        return True
-    if not os.path.isfile(SWEEP_FINGERPRINT):
-        return True
-    current = _config_fingerprint(CONFIG_FILE)
-    with open(SWEEP_FINGERPRINT, 'r') as f:
-        saved = json.load(f).get('hash')
-    return current != saved
-
-
-def _save_sweep_fingerprint():
-    """Write the current config hash next to the sweep file."""
-    fp = _config_fingerprint(CONFIG_FILE)
-    with open(SWEEP_FINGERPRINT, 'w') as f:
-        json.dump({'hash': fp, 'config': CONFIG_FILE}, f)
+sys.path.insert(0, REPO_ROOT)
+from vbrc_V2Tpy.bayesian_fitting_py.orchestration import (
+    run_sweep_step, replot_lut, run_inversion_step,
+)
 
 
 # ===================================================================
@@ -460,28 +427,6 @@ def _make_comparison_plots(z_km, T_true, phi_true, gs_true, Vs_syn, Q_syn,
 # ===================================================================
 # Main
 # ===================================================================
-def _replot_lut():
-    """Regenerate LUT plots from the existing sweep."""
-    sys.path.insert(0, REPO_ROOT)
-    from vbrc_V2Tpy.bayesian_fitting_py.fitting import load_sweep_data
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.plot_lut import generate_sweep_lut_plots
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import load_sweep_params_from_yaml
-
-    print(f"Loading sweep from {SWEEP_FILE} ...")
-    sweep = load_sweep_data(SWEEP_FILE)
-
-    sweep_params = load_sweep_params_from_yaml(CONFIG_FILE)
-    sweep_params.output_file = SWEEP_FILE
-    if sweep_params.plot_lut:
-        sweep_params.plot_lut_dir = os.path.join(OUTPUT_DIR, 'lut_plots')
-    plot_dir = sweep_params.plot_lut_dir
-    every_n = sweep_params.plot_lut_every_n
-
-    print(f"Generating LUT plots (every {every_n} depths) in {plot_dir} ...")
-    n_saved = generate_sweep_lut_plots(sweep, plot_dir, every_n=every_n)
-    print(f"Done — {n_saved} figures saved.")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description='Geotherm round-trip validation example',
@@ -497,7 +442,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     if args.replot_lut:
-        _replot_lut()
+        replot_lut(CONFIG_FILE, SWEEP_FILE, OUTPUT_DIR)
         return
 
     # Load the geotherm profile (truncated at 660 km)
@@ -506,36 +451,13 @@ def main():
           f"{geotherm_z.min():.0f}–{geotherm_z.max():.0f} km, "
           f"{geotherm_T_vals.min():.0f}–{geotherm_T_vals.max():.0f} °C")
 
-    python = sys.executable
-
     # ------------------------------------------------------------------
     # Step 1: Generate the parameter sweep
     # ------------------------------------------------------------------
     print("=" * 70)
     print("STEP 1: Generate parameter sweep (look-up table)")
     print("=" * 70, flush=True)
-    if _sweep_needs_regeneration():
-        if os.path.isfile(SWEEP_FILE):
-            print("  Sweep config changed — regenerating ...")
-        from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import (
-            load_sweep_params_from_yaml as _lspy,
-            generate_parameter_sweep as _gps,
-            save_sweep as _ss,
-        )
-        _params = _lspy(CONFIG_FILE)
-        _params.output_file = SWEEP_FILE
-        if _params.plot_lut:
-            _params.plot_lut_dir = os.path.join(OUTPUT_DIR, 'lut_plots')
-        _sweep = _gps(_params)
-        _ss(_sweep, _params.output_file)
-        if _params.plot_lut:
-            from vbrc_V2Tpy.bayesian_fitting_py.vbr.plot_lut import generate_sweep_lut_plots
-            print(f"\nGenerating LUT plots (every {_params.plot_lut_every_n} depths)...")
-            generate_sweep_lut_plots(_sweep, _params.plot_lut_dir,
-                                     every_n=_params.plot_lut_every_n)
-        _save_sweep_fingerprint()
-    else:
-        print(f"  Sweep up-to-date at {SWEEP_FILE} — skipping generation.")
+    run_sweep_step(CONFIG_FILE, SWEEP_FILE, OUTPUT_DIR, SWEEP_FINGERPRINT)
 
     # ------------------------------------------------------------------
     # Step 2: Create synthetic observations from the geotherm
@@ -554,18 +476,10 @@ def main():
     print("\n" + "=" * 70)
     print("STEP 3: Run Bayesian inversion on synthetic observations")
     print("=" * 70)
-    cmd = [
-        python, '-m',
-        'vbrc_V2Tpy.bayesian_fitting_py',
-        '--config', CONFIG_FILE,
-        '--vs-file', SYNTH_CSV,
-        '--q-file', SYNTH_CSV,
-        '--sweep-file', SWEEP_FILE,
-        '--output-dir', INVERSION_DIR,
-        '--parallel', '16',
-    ]
-    print(f"  Running: {' '.join(cmd)}\n", flush=True)
-    subprocess.run(cmd, check=True)
+    run_inversion_step(
+        CONFIG_FILE, SWEEP_FILE, INVERSION_DIR,
+        vs_file=SYNTH_CSV, q_file=SYNTH_CSV, parallel=16,
+    )
 
     # ------------------------------------------------------------------
     # Step 4: Compare recovered parameters against truth

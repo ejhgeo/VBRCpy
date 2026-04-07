@@ -34,6 +34,15 @@ def precompute_depth_averaged_sweep(
     depth_range_m = np.array(z_range) * 1e3
     z_inds = np.where((z >= depth_range_m[0]) & (z <= depth_range_m[1]))[0]
 
+    if len(z_inds) == 0:
+        sweep_zmin_km = z.min() / 1e3
+        sweep_zmax_km = z.max() / 1e3
+        raise ValueError(
+            f"No sweep depths fall within the observation depth range "
+            f"({z_range[0]:.0f}\u2013{z_range[1]:.0f} km). "
+            f"The sweep covers {sweep_zmin_km:.0f}\u2013{sweep_zmax_km:.0f} km."
+        )
+
     box = sweep['Box'][anelastic_method]
     result = {
         'meanVs': np.mean(box['meanVs'][:, :, :, z_inds], axis=3),

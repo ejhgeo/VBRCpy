@@ -61,6 +61,10 @@ def probability_uniform(
         Probability for each of the values in x
     """
     x = np.asarray(x)
+    if max_val <= min_val:
+        raise ValueError(
+            f"probability_uniform: max_val ({max_val}) must be > min_val ({min_val})"
+        )
     uniform_pdf = np.ones(x.shape) / (max_val - min_val)
     return uniform_pdf
 
@@ -208,6 +212,10 @@ def conditionally_independent_c_given_ab(
     p_b_given_c = np.asarray(p_b_given_c)
     p_c = np.asarray(p_c)
     p_a_and_b = np.asarray(p_a_and_b)
+    
+    # Guard against zero joint probability (no valid models match observations)
+    if np.all(p_a_and_b == 0):
+        return np.zeros_like(p_c)
     
     p_c_given_ab = p_a_given_c * p_b_given_c * p_c / p_a_and_b
     return p_c_given_ab

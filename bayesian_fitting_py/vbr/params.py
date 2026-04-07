@@ -110,7 +110,7 @@ def Params_Elastic(method: str = '') -> Dict[str, Any]:
         
         # Isaak 1992 derivatives + Havlin et al. 2021 (quoting Isaak 1992) pressure scaling
         # From Havlin et al., 2021 paper: dG/dT = -13.6 MPa/K, dG/dP = 1.8, G0 = 80 GPa
-        # Isaak 1992 only provides temperature derivatives, so user must use Cammarano 2003 or Abramson for pressure derivatives
+        # Isaak 1992 only provides temperature derivatives, so user must use Cammarano et al. (2003) or Abramson for pressure derivatives
         params['isaak'] = {
             'dG_dT': -1.36e7,  # Pa/K (13.6 MPa/K from Isaak 1992)
             'dK_dT': -1.8e7,   # Pa/K
@@ -120,7 +120,7 @@ def Params_Elastic(method: str = '') -> Dict[str, Any]:
             # 'dK_dP2': 0.0,     # 1/Pa
         }
         
-        # Cammarano 2003 derivatives
+        # Cammarano et al. (2003) derivatives
         params['cammarano'] = {
             'dG_dT': -0.014e9,  # Pa/K
             'dG_dP': 1.4,       # unitless

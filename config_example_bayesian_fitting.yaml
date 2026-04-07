@@ -73,7 +73,7 @@ vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
 q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
 lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
 # sweep_file: ./vbrc_V2Tpy/data/plate_VBR/sweep_log_gs.mat  # original sweep file with VBRc distribution
-sweep_file: ./sweep_fixed.mat
+sweep_file: ./vbrc_V2Tpy/data/plate_VBR/sweep_log_gs.mat
 # sweep_file: ./test.mat
 
 # ----------------------------------------------------------------------------
@@ -87,7 +87,8 @@ anelastic_methods:
 - andrade_psp
 
 # Grain size prior:
-#   gs_prior_type: 'log_uniform' or 'log_normal'
+#   gs_prior_type: 'log_uniform' (default, flat in log-space), 'uniform' (alias
+#     for log_uniform), or 'log_normal' (Gaussian in log-space)
 #   gs_prior_mean_mm: mean grain size in mm (only for log_normal)
 #   gs_prior_std: std dev in log-space (only for log_normal, default 0.25)
 gs_prior_type: log_normal
@@ -104,6 +105,22 @@ gs_prior_std: 0.25
 phi_prior_type: uniform
 # phi_onset_depth_km: 80.0  # only used with piecewise_depth
 
+# Temperature prior:
+#   t_prior_type: 'uniform' (default, flat) or 'geotherm' (Gaussian centred on
+#     a reference geotherm at each depth)
+#   geotherm_file: built-in name ('sc2006' for Steinberger & Calderwood 2006
+#     continental geotherm) or path to a CSV with columns: depth_km, temperature_C
+#   geotherm_std_C: standard deviation (°C) of the Gaussian prior (default 200.0)
+t_prior_type: uniform
+# t_prior_type: geotherm
+# geotherm_file: sc2006
+# geotherm_std_C: 200.0
+
+# Q error mode: how default_q_error is interpreted
+#   'absolute' (default): σ_Q = default_q_error
+#   'percent': σ_Q = (default_q_error / 100) × Q_obs
+q_error_mode: absolute
+
 # Observations to use: Vs, Q, or VsQ (both)
 obs_types: VsQ
 
@@ -111,7 +128,6 @@ obs_types: VsQ
 # OUTPUT SETTINGS
 # ----------------------------------------------------------------------------
 output_dir: plots_debug_new/
-# output_dir: plots_reference_from_testmat_sweep/
 save_plots: true
 # force_plots: true      # force posterior plots even for large-scale runs
 # plot_every_n: 5        # with force_plots, plot every N-th location (1 = all)
@@ -119,3 +135,13 @@ save_plots: true
 # For large-scale runs (tomography mode), save ML estimates to CSV
 save_ml_csv: true
 # ml_csv_file: ml_estimates.csv  # auto-generated if not specified
+
+# Run tagging: controls the inversion output subdirectory name.
+#   'none' — plain 'inversion_results/' (default, backward compatible)
+#   'auto' — auto-generate a compact tag from inversion parameters
+#   <str>  — use 'inversion_<str>' as the subdirectory name
+# run_tag: none
+
+# Parallelization (for large-scale runs)
+#   0 = auto (all cores), 1 = sequential (default), N = N workers
+# parallel_workers: 1

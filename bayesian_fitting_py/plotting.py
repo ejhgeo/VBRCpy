@@ -167,13 +167,13 @@ def plot_tradeoffs_posterior(
         )
         
         # Mark the MAP (highest-probability) voxel.
-        # imshow maps pixels uniformly across the extent, so we must
-        # compute the pixel-centre position rather than using the raw
-        # grid values (which may be non-uniformly spaced, e.g. logspace).
+        # Use the actual grid values rather than pixel-centre interpolation,
+        # which is inaccurate when axes are non-uniformly spaced (e.g., when
+        # grain size is log-spaced).
         nrows, ncols = p_joint.shape
         iy_max, ix_max = np.unravel_index(np.argmax(p_joint), p_joint.shape)
-        x_map = x_vals.min() + (ix_max + 0.5) / ncols * (x_vals.max() - x_vals.min())
-        y_map = y_vals.min() + (iy_max + 0.5) / nrows * (y_vals.max() - y_vals.min())
+        x_map = x_vals[ix_max]
+        y_map = y_vals[iy_max]
         ax.plot(x_map, y_map, 's',
                 ms=12, mfc='none', mew=2, color='red', label='MAP')
         

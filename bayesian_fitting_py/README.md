@@ -20,14 +20,14 @@ This package provides tools to:
 
 ## Installation
 
-### Requirements
-- Python 3.8+
-- NumPy
-- SciPy
-- Matplotlib
-- PyYAML
-- pandas (optional, for CSV model loading)
-- xarray (optional, for NetCDF model loading)
+### Environment Setup
+
+Create a conda environment with all required packages (including plotting):
+
+```bash
+conda create -n vbrc_v2t -c conda-forge python=3.12 numpy scipy matplotlib pyyaml pandas xarray netcdf4 pygmt
+conda activate vbrc_v2t
+```
 
 ### Install the package
 
@@ -40,19 +40,6 @@ pip install -e ./vbrc_V2Tpy
 This installs the package in **editable mode** (`-e`), meaning:
 - `python -m bayesian_fitting_py` works from any directory on your system
 - Code changes in `vbrc_V2Tpy/bayesian_fitting_py/` take effect immediately (no reinstall needed)
-- Required dependencies (NumPy, SciPy, Matplotlib, PyYAML) are installed automatically
-
-To also install optional dependencies for CSV/NetCDF model loading:
-
-```bash
-pip install -e "./vbrc_V2Tpy[full]"
-```
-
-To uninstall:
-
-```bash
-pip uninstall bayesian_fitting_py
-```
 
 ## Usage
 
@@ -67,7 +54,7 @@ results = run_bayesian_inversion()
 
 # Or customize
 config = InversionConfig(
-    gs_prior_type='log_uniform',  # or 'log_normal'
+    gs_prior_type='log_uniform',  # or 'uniform' (alias) or 'log_normal'
     anelastic_methods=['xfit_premelt', 'eburgers_psp'],
     obs_types='VsQ',  # 'Vs', 'Q', or 'VsQ'
     output_dir='./my_output',
@@ -292,7 +279,7 @@ anelastic_methods:
   - eburgers_psp
 
 # Grain size prior
-# gs_prior_type: log_uniform or log_normal
+# gs_prior_type: log_uniform, uniform (alias for log_uniform), or log_normal
 # gs_prior_mean_mm: 1.0     # mean grain size in mm (for log_normal)
 # gs_prior_std: 1.0         # std dev in log-space (for log_normal)
 gs_prior_type: log_uniform
@@ -385,6 +372,8 @@ bayesian_fitting_py/
 ├── probability.py       # Probability distribution functions
 ├── prior.py             # Prior probability calculations (incl. geotherm T prior)
 ├── plotting.py          # Visualization functions
+├── orchestration.py     # Reusable sweep/inversion workflow helpers
+├── io.py                # Split-file CSV I/O for ML estimates
 ├── fetch_data.py        # Data fetching utilities
 ├── requirements.txt     # Python dependencies
 ├── README.md            # This file
@@ -572,7 +561,7 @@ print(f"Eta (xfit_premelt): {results.viscous['xfit_premelt']['eta']} Pa·s")
 ### Available Methods
 
 **Elastic Methods:**
-- `anharmonic`: Linear Taylor expansion with olivine parameters (Isaak 1992, Cammarano 2003). Suitable for upper mantle.
+- `anharmonic`: Linear Taylor expansion with olivine parameters (Isaak 1992, Cammarano et al., 2003). Suitable for upper mantle.
 - `cammarano2003`: Finite-strain mineral physics with depth-dependent mineralogy (Cammarano et al. 2003). Suitable for upper mantle through lower mantle.
 - `anh_poro`: Poro-elastic melt effect (poroelastic reduction of shear modulus)
 
@@ -591,7 +580,7 @@ print(f"Eta (xfit_premelt): {results.viscous['xfit_premelt']['eta']} Pa·s")
 Configurable via `solidus_method` in the sweep config:
 - `hirschmann`: Hirschmann (2000) — default
 - `katz`: Katz et al. (2003)
-- `yk2001`: Yasuda & Karato (2001) — uses depth-dependent pressure from earth model
+- `yk2001`: Yamazaki & Karato (2001) — uses depth-dependent pressure from earth model
 
 ```python
 from bayesian_fitting_py.vbr.thermal import solidus, calculate_solidus_K
@@ -599,7 +588,7 @@ from bayesian_fitting_py.vbr.thermal import solidus, calculate_solidus_K
 # Calculate solidus at a given pressure
 T_sol = solidus(P_GPa=2.0, method='katz')  # Katz et al. 2003
 T_sol = solidus(P_GPa=2.0, method='hirschmann')  # Hirschmann 2000
-T_sol = solidus(P_GPa=2.0, method='yk2001')  # Yasuda & Karato 2001
+T_sol = solidus(P_GPa=2.0, method='yk2001')  # Yamazaki & Karato 2001
 
 # With volatile depression
 T_sol_wet = calculate_solidus_K(
@@ -645,6 +634,7 @@ posterior marginal distribution (not just the ML point estimate).
 
 Configurable via `gs_prior_type` and related fields:
 - `log_uniform`: Uniform probability in log-space (default)
+- `uniform`: Alias for `log_uniform` (identical behavior)
 - `log_normal`: Log-normal distribution with configurable mean (`gs_prior_mean_mm`
   in mm) and standard deviation (`gs_prior_std` in log-space)
 
@@ -675,7 +665,7 @@ Configurable via `t_prior_type` and related fields:
   unrealistically high temperature estimates.
 
 Built-in geotherms:
-- `sc2006`: Stixrude & Lithgow-Bertelloni (2006) continental geotherm (0–3000 km)
+- `sc2006`: Steinberger & Calderwood (2006) continental geotherm (0–3000 km)
 
 A custom geotherm can be supplied as a CSV file with columns `depth_km` and
 `temperature_C`.  Values are linearly interpolated to the midpoint of each

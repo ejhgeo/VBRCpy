@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-04-06
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
-> **Latest commit:** `8a93465` — "Fix MATLAB struct indexing bug, rename compare_lut_slices, cleanup"
+> **Latest commit:** `ee91550` — "Add geotherm T prior, run_tag feature, built-in 1D Earth models, viscous_method config, PREM/STW105 validation cases"
 > **Uncommitted changes:** Yes — see §6 "Recent Uncommitted Changes"
 
 Use this document to bootstrap a new AI chat session on this project.
@@ -64,6 +64,8 @@ vbrc_V2Tpy/
     ├── probability.py        # probability_distributions (likelihood, posterior, combined)
     ├── parallel.py           # multiprocessing support for large-scale runs
     ├── plotting.py           # all figure generation
+    ├── orchestration.py      # reusable sweep/inversion workflow helpers
+    ├── io.py                 # split-file CSV I/O for ML estimates
     ├── fetch_data.py         # interactive data downloader
     └── vbr/                  # VBR core calculations (Python port of MATLAB VBRc)
         ├── core.py           # anelastic methods: andrade_psp, eburgers_psp, xfit_mxw, xfit_premelt
@@ -191,7 +193,7 @@ All four methods verified against MATLAB output to floating-point precision:
 #### Geotherm-Based Temperature Prior
 - **New `t_prior_type` config option**: `'uniform'` (default, flat prior) or
   `'geotherm'` (Gaussian centered on a reference geotherm at each depth)
-- **`geotherm_file`**: built-in name (`'sc2006'` for Stixrude & Lithgow-Bertelloni
+- **`geotherm_file`**: built-in name (`'sc2006'` for Steinberger & Calderwood
   2006 continental geotherm) or path to a CSV with `depth_km, temperature_C` columns
 - **`geotherm_std_C`**: standard deviation (°C) of the Gaussian prior (default 200.0)
 - **`TemperaturePrior` dataclass** in `prior.py`: encapsulates prior configuration;
@@ -316,7 +318,7 @@ All four methods verified against MATLAB output to floating-point precision:
 
 #### Synthetic Geotherm Validation Test (`syntheticTest_geotherm`)
 - **New validation case:** `validation/syntheticTest_geotherm/` uses the SC2006
-  continental geotherm (Stixrude & Lithgow-Bertelloni 2006) instead of a simple
+  continental geotherm (Steinberger & Calderwood, 2006) instead of a simple
   adiabat, providing realistic thermal structure with a cold lithospheric lid,
   thermal boundary layer, and convecting interior
 - Same 4-step orchestrator pattern as syntheticTest_adiabat

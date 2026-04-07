@@ -38,6 +38,8 @@ from .fitting import (
 from .prior import GrainSizePrior, MeltFractionPrior
 from .plotting import generate_colors
 from .run_bayes import run_bayesian_inversion, InversionConfig
+from .orchestration import run_sweep_step, replot_lut, run_inversion_step
+from .io import write_split_ml_csv, load_ml_estimates, find_ml_estimates
 
 # VBR module for sweep generation
 from .vbr import VBR
@@ -61,6 +63,13 @@ __all__ = [
     "detect_file_type",
     "load_seismic_model_universal",
     "generate_colors",
+    # Orchestration & I/O
+    "run_sweep_step",
+    "replot_lut",
+    "run_inversion_step",
+    "write_split_ml_csv",
+    "load_ml_estimates",
+    "find_ml_estimates",
     # VBR sweep generation
     "VBR",
 ]
