@@ -798,6 +798,7 @@ def run_bayesian_inversion(
                 use_q=use_q,
                 melt_fraction_prior=melt_fraction_prior,
                 temperature_prior=temperature_prior,
+                lightweight_results=(large_scale_run and n_locations > 1000),
             )
             _elapsed = _time.time() - _t0
             print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")

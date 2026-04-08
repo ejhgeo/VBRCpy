@@ -4,6 +4,11 @@ Parallel processing support for large-scale Bayesian inversion.
 Provides a worker function and dispatch logic for multiprocessing.
 Each location is processed independently, so the workload is
 embarrassingly parallel.
+
+Large shared arrays (sweep grids, priors, sweep vectors) are passed to
+workers via a Pool initializer so they are inherited at fork time
+(copy-on-write) instead of being pickled into every task tuple.  This
+keeps per-task pickle size to ~200 bytes regardless of sweep dimensions.
 """
 
 import numpy as np
@@ -13,6 +18,18 @@ from .probability import probability_distributions
 from .prior import make_param_grid, prep_gs_lognormal, prior_model_probs
 from .fitting import extract_ml_estimates
 from .prior import MeltFractionPrior, TemperaturePrior
+
+
+# ---------------------------------------------------------------------------
+# Worker-global shared data  (populated by _init_worker at fork time)
+# ---------------------------------------------------------------------------
+_shared: Dict[str, Any] = {}
+
+
+def _init_worker(shared_data: Dict[str, Any]) -> None:
+    """Store shared arrays as module globals in each worker process."""
+    global _shared
+    _shared = shared_data
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +149,14 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
 
     Designed to be picklable for multiprocessing — takes a single
     tuple argument and returns a results dict (or None on error).
+
+    When running in parallel, large arrays are read from module-level
+    ``_shared`` (populated by ``_init_worker``).  The *args* tuple
+    carries only small per-location scalars plus integer indices into
+    the shared lists.
+
+    When running sequentially (no Pool), the caller sets ``_shared``
+    directly before the loop so the same code path is used.
     """
     (
         il,               # location index
@@ -141,19 +166,22 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
         use_vs, use_q,
         obs_vs, sigma_vs,
         obs_q, sigma_q,
-        depth_key,        # (z_min, z_max) tuple used to look up pre-averaged grids
-        precomputed,      # dict with 'meanVs', 'meanQ', 'meanEta' for this depth_key
-        prior_statevars,  # 3-D prior array (melt allowed)
-        sweep_vectors,    # {'T': ..., 'phi': ..., 'gs': ..., 'state_names': ..., 'gs_params': ...}
+        depth_key_idx,    # int index into _shared['precomputed_list']
+        prior_idx,        # int index into _shared['prior_list']
         anelastic_method,
         save_ml_csv,
         has_depth_col,    # bool — whether to include 'z' in CSV record
         depth_val,        # actual depth value (or None)
         default_vs_error,
         default_q_error,
-        prior_no_melt,    # 3-D prior array with zero-melt (or None)
         melt_onset_depth_km,  # onset depth for piecewise selection (or None)
     ) = args
+
+    # Look up shared arrays by index
+    precomputed = _shared['precomputed_list'][depth_key_idx]
+    sweep_vectors = _shared['sweep_vectors']
+    prior_statevars = _shared['prior_list'][prior_idx]
+    prior_no_melt = _shared['prior_no_melt_list'][prior_idx]
 
     # Select the appropriate prior based on depth
     if prior_no_melt is not None and melt_onset_depth_km is not None:
@@ -288,6 +316,16 @@ def _process_one_location(args: Tuple) -> Optional[Dict[str, Any]]:
                     record['Q_chi2'] = np.nan
             record['chi2_total'] = chi2_total if n_obs > 0 else np.nan
 
+        # Return lightweight results if large-scale mode is active
+        lightweight = _shared.get('lightweight_results', False)
+        if lightweight:
+            return {
+                'il': il,
+                'locname': locname,
+                'ml_est': ml_est,
+                'record': record,
+            }
+
         # Marginal P(phi, T | S) for ensemble
         pS_norm = pS / np.sum(pS)
         p_joint = np.sum(pS_norm, axis=2)  # marginalise over grain size
@@ -331,6 +369,7 @@ def run_locations_parallel(
     use_q: bool = True,
     melt_fraction_prior: Optional[MeltFractionPrior] = None,
     temperature_prior: Optional[TemperaturePrior] = None,
+    lightweight_results: bool = False,
 ) -> List[Optional[Dict[str, Any]]]:
     """
     Process all locations for one anelastic method, optionally in parallel.
@@ -445,22 +484,39 @@ def run_locations_parallel(
     }
 
     # ------------------------------------------------------------------
-    # 3. Build argument tuples for each location
+    # 3. Build shared data dict and lightweight per-location arg tuples
     # ------------------------------------------------------------------
+
+    # Map each unique depth key to an integer index for compact pickling
+    depth_keys_list = list(unique_z.keys())          # ordered list of (z_min, z_max)
+    depth_key_to_idx = {k: i for i, k in enumerate(depth_keys_list)}
+    precomputed_list = [unique_z[k] for k in depth_keys_list]
+
+    # Build parallel lists of priors indexed the same way as depth keys
+    prior_list = []       # prior_list[i] = prior array for depth_keys_list[i]
+    prior_no_melt_list = []
+    for depth_key in depth_keys_list:
+        if prior_by_depth is not None:
+            prior_list.append(prior_by_depth[depth_key])
+            prior_no_melt_list.append(prior_no_melt_by_depth.get(depth_key))
+        else:
+            prior_list.append(prior_statevars)
+            prior_no_melt_list.append(prior_no_melt)
+
+    shared_data = {
+        'precomputed_list': precomputed_list,
+        'sweep_vectors': sweep_vectors,
+        'prior_list': prior_list,
+        'prior_no_melt_list': prior_no_melt_list,
+        'lightweight_results': lightweight_results,
+    }
+
     job_args = []
     for il, (lat, lon) in enumerate(locations):
         locname = names[il]
         z_min, z_max = z_ranges[il]
         depth_key = (z_min, z_max)
-        precomputed = unique_z[depth_key]
-
-        # Select the appropriate prior for this location's depth
-        if prior_by_depth is not None:
-            loc_prior = prior_by_depth[depth_key]
-            loc_prior_no_melt = prior_no_melt_by_depth.get(depth_key)
-        else:
-            loc_prior = prior_statevars
-            loc_prior_no_melt = prior_no_melt
+        dk_idx = depth_key_to_idx[depth_key]
 
         obs_vs = sigma_vs = obs_q = sigma_q = None
         depth_val = None
@@ -490,19 +546,20 @@ def run_locations_parallel(
             il, locname, lat, lon, z_min, z_max,
             use_vs, use_q,
             obs_vs, sigma_vs, obs_q, sigma_q,
-            depth_key, precomputed,
-            loc_prior, sweep_vectors,
+            dk_idx, dk_idx,
             anelastic_method, config.save_ml_csv,
             has_depth_col, depth_val,
             config.default_vs_error, config.default_q_error,
-            loc_prior_no_melt, melt_onset_km,
+            melt_onset_km,
         ))
 
     # ------------------------------------------------------------------
     # 4. Execute — sequential or parallel
     # ------------------------------------------------------------------
     if n_workers <= 1:
-        # Sequential (no overhead, good for small runs)
+        # Sequential: populate _shared so _process_one_location can read it
+        global _shared
+        _shared = shared_data
         results = []
         for i, args in enumerate(job_args):
             if i % max(1, n_locations // 20) == 0 or i == n_locations - 1:
@@ -519,7 +576,11 @@ def run_locations_parallel(
         report_interval = max(1, n_locations // 20)  # ~5% increments
         t_start = _time.time()
 
-        with mp.Pool(processes=n_workers) as pool:
+        with mp.Pool(
+            processes=n_workers,
+            initializer=_init_worker,
+            initargs=(shared_data,),
+        ) as pool:
             for res in pool.imap_unordered(
                 _process_one_location_indexed, enumerate(job_args), chunksize=chunksize
             ):
