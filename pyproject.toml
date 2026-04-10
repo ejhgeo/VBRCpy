@@ -21,6 +21,8 @@ dependencies = [
 
 [project.scripts]
 fetch-vbr-data = "bayesian_fitting_py.fetch_data:_cli_main"
+vbrc-to-netcdf = "bayesian_fitting_py.postprocessing:_cli_to_netcdf"
+vbrc-plot-maps = "bayesian_fitting_py.postprocessing:_cli_plot_maps"
 
 [tool.setuptools.packages.find]
 include = ["bayesian_fitting_py*"]

@@ -10,7 +10,9 @@ to machine precision (0.000000% difference) across a full parameter sweep
 of temperature, grain size, melt fraction, and depth.
 
 Designed to scale from single locations to global tomography models with
-built-in **multiprocessing support** for large-scale runs.
+built-in **multiprocessing support** for large-scale runs.  Depth-batched
+streaming dispatch with resume capability enables inversion of 23M+ grid
+points on HPC clusters with bounded memory.
 
 ## Quick Start
 
@@ -66,6 +68,18 @@ python -m bayesian_fitting_py --config my_config.yaml -j 0
 python -m bayesian_fitting_py --list-methods
 ```
 
+### 5. Post-Processing
+
+After a large-scale run, convert results to NetCDF and generate maps:
+
+```bash
+# Convert split-file CSVs to compressed 3-D NetCDF files
+vbrc-to-netcdf --csv path/to/ml_estimates/
+
+# Plot global Robinson-projection maps at selected depths
+vbrc-plot-maps --depth 100 200 400 --vars T_mean log10_eta_mean phi_mean gs_mean_mm
+```
+
 ## Features
 
 - **Bayesian inversion** of Vs and/or Q at arbitrary locations and depth ranges
@@ -82,13 +96,24 @@ python -m bayesian_fitting_py --list-methods
   usable as `vs_file`, `q_file`, `reference_model`, or `density_model`
 - **Run tagging**: `run_tag` organizes multiple inversion runs (different priors,
   obs types, etc.) under the same sweep directory without overwriting results
-- **Parallel processing**: multiprocessing support for large-scale tomography runs
+- **Depth-batched streaming**: processes one depth layer at a time, flushing
+  results to split-file CSVs after each batch — bounds peak memory regardless
+  of total model size (tested on 23M-point global model, 128 cores, ~5 min)
+- **Resume support**: `resume: true` config option resumes interrupted runs by
+  reading the progress file and skipping completed depths
+- **Post-processing pipeline**: CSV → NetCDF conversion (`csv_to_netcdf`) and
+  global Robinson-projection map plotting (`plot_global_maps`) via PyGMT
+- **CLI entry points**: `vbrc-to-netcdf` and `vbrc-plot-maps` for post-processing
+- **Parallel processing**: multiprocessing support with shared-memory Pool
+  initializer pattern (eliminates per-task pickle overhead)
 - **Flexible input**: manual locations, or `model` mode with auto-detected format
   (.csv, .mat, .nc) via `vs_file` / `q_file`
 - **Pure-Python VBR calculator** — generate parameter sweeps without MATLAB
 - **MATLAB benchmark validation** — automated comparison against original VBRc output
+- **Auto-convert to NetCDF**: `save_ml_netcdf: true` in config automatically
+  converts CSVs to compressed 3-D NetCDF after streaming completes
 - **Publication-quality plots** with posterior PDFs, T–φ trade-offs, ensemble summaries,
-  and PyGMT map-view post-processing
+  and PyGMT map-view post-processing (Robinson projection for global models)
 
 ## Project Layout
 
@@ -105,7 +130,8 @@ vbrc_V2Tpy/
 └── bayesian_fitting_py/            # Python package
     ├── run_bayes.py                # Main inversion driver & CLI
     ├── fitting.py                  # Fitting functions & ML estimation
-    ├── parallel.py                 # Multiprocessing support for large-scale runs
+    ├── parallel.py                 # Depth-batched streaming parallel dispatch
+    ├── postprocessing.py           # CSV→NetCDF conversion & global map plotting
     ├── data_processing.py          # Seismic data I/O (CSV, MAT, NetCDF)
     ├── prior.py                    # Prior probability (incl. geotherm T prior)
     ├── probability.py              # Likelihood & posterior calculations

@@ -45,6 +45,7 @@ def _format_value(v):
 def write_split_ml_csv(
     records: List[Dict[str, Any]],
     output_dir: str,
+    append: bool = False,
 ) -> List[str]:
     """Write ML-estimate records into split CSV files.
 
@@ -59,6 +60,9 @@ def write_split_ml_csv(
         The flat list of per-location ML estimate records.
     output_dir : str
         Parent directory.  A ``ml_estimates/`` subdirectory will be created.
+    append : bool
+        If True, append to existing CSV files instead of overwriting.
+        Headers are only written when the file does not yet exist.
 
     Returns
     -------
@@ -92,9 +96,15 @@ def write_split_ml_csv(
             {k: _format_value(r.get(k, '')) for k in fieldnames}
             for r in records
         ]
-        with open(csv_path, 'w', newline='') as f:
+
+        file_exists = os.path.isfile(csv_path)
+        mode = 'a' if (append and file_exists) else 'w'
+        write_header = not (append and file_exists)
+
+        with open(csv_path, mode, newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+            if write_header:
+                writer.writeheader()
             writer.writerows(formatted)
         written.append(csv_path)
 

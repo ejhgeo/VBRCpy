@@ -15,8 +15,11 @@ This package provides tools to:
 - Calculate posterior probability distributions for state variables (T, φ, gs, η)
 - Estimate **viscosity** (log₁₀ η) with full posterior uncertainty from HK2003 composite rheology
 - Combine results across multiple anelastic calculation methods
+- Scale from single locations to **23M+ grid point** global models with
+  **depth-batched streaming** parallel dispatch and resume support
+- Convert results to compressed 3-D **NetCDF** files and plot global
+  **Robinson-projection maps** via PyGMT
 - Generate publication-quality figures
-- Scale from single locations to full 3D seismic models with **multiprocessing** support
 
 ## Installation
 
@@ -207,15 +210,19 @@ python -m bayesian_fitting_py --config my_config.yaml -j 0
 # parallel_workers: 4
 ```
 
-Parallel mode is available for `model` and `locations_file` location modes.
-It pre-computes depth-averaged grids and priors once, then distributes
-locations across worker processes. Results are identical to sequential mode.
+Parallel mode uses depth-batched streaming dispatch: locations are grouped by
+depth, processed one layer at a time, and results are flushed to split-file
+CSVs after each batch.  This bounds peak memory regardless of total model size.
 
-| Workers | Time (3168 locs × 4 methods) |
-|---------|------------------------------|
-| 1 (sequential) | ~22 min |
-| 4 | ~8 min |
-| 16 (all cores) | ~4 min |
+To resume an interrupted run, add `resume: true` to the config.  The code reads
+the progress file written by depth-batched streaming to skip completed depths.
+
+| Workers | Time (3168 locs × 4 methods) | Time (23M locs × 1 method) |
+|---------|------------------------------|-----------------------------|
+| 1 (sequential) | ~22 min | N/A |
+| 4 | ~8 min | N/A |
+| 16 | ~4 min | N/A |
+| 96 (Anvil HPC) | N/A | ~5 hours |
 
 ### Using Parameter Files
 
@@ -309,6 +316,12 @@ output_dir: plots/output_plots
 save_plots: true
 save_ml_csv: false
 
+# Resume: pick up where an interrupted streaming run left off
+# resume: true
+
+# Auto-convert ML-estimate CSVs to compressed 3-D NetCDF after streaming
+# save_ml_netcdf: false
+
 # Run tagging: controls the inversion output subdirectory name.
 #   'none' — plain 'inversion_results' (default, backward compatible)
 #   'auto' — auto-generate a compact tag from inversion parameters
@@ -367,7 +380,8 @@ bayesian_fitting_py/
 ├── __main__.py          # CLI entry point
 ├── run_bayes.py         # Main inversion script, CLI, InversionConfig
 ├── fitting.py           # Fitting functions & ML estimation (incl. viscosity)
-├── parallel.py          # Multiprocessing support for large-scale runs
+├── parallel.py          # Depth-batched streaming parallel dispatch
+├── postprocessing.py    # CSV→NetCDF conversion & global map plotting
 ├── data_processing.py   # Seismic data loading and processing
 ├── probability.py       # Probability distribution functions
 ├── prior.py             # Prior probability calculations (incl. geotherm T prior)
