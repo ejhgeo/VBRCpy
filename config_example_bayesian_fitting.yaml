@@ -136,6 +136,14 @@ save_plots: true
 save_ml_csv: true
 # ml_csv_file: ml_estimates.csv  # auto-generated if not specified
 
+# Auto-convert ML-estimate CSVs to compressed 3-D NetCDF files after
+# streaming completes.  Files written to ml_estimates_nc/ next to CSVs.
+# save_ml_netcdf: false
+
+# Resume an interrupted streaming run.  Reads _progress.txt to skip
+# already-completed depths and appends to existing CSVs.
+# resume: false
+
 # Run tagging: controls the inversion output subdirectory name.
 #   'none' — plain 'inversion_results/' (default, backward compatible)
 #   'auto' — auto-generate a compact tag from inversion parameters

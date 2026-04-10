@@ -1,9 +1,10 @@
 # vbrc_V2Tpy — Project State Document
 
-> **Last updated:** 2026-04-06
+> **Last updated:** 2026-04-09
 > **Repo:** https://github.com/ejhgeo/vbrc_V2Tpy.git
-> **Latest commit:** `ee91550` — "Add geotherm T prior, run_tag feature, built-in 1D Earth models, viscous_method config, PREM/STW105 validation cases"
-> **Uncommitted changes:** Yes — see §6 "Recent Uncommitted Changes"
+> **Branch:** `fix/parallel-shared-memory`
+> **Latest commit:** `ea62519` — "Add depth-batched streaming, resume support, and post-processing module"
+> **Uncommitted changes:** No
 
 Use this document to bootstrap a new AI chat session on this project.
 Paste it as context and say "Continue working on this project" or ask a specific question.
@@ -62,10 +63,11 @@ vbrc_V2Tpy/
     ├── data_processing.py    # Location, SeismicModelData, loaders (CSV/mat/NetCDF)
     ├── prior.py              # prior_model_probs, store_ensemble, confidence_cutoffs, TemperaturePrior
     ├── probability.py        # probability_distributions (likelihood, posterior, combined)
-    ├── parallel.py           # multiprocessing support for large-scale runs
+    ├── parallel.py           # depth-batched streaming parallel dispatch
+    ├── postprocessing.py     # CSV→NetCDF conversion & global map plotting
     ├── plotting.py           # all figure generation
     ├── orchestration.py      # reusable sweep/inversion workflow helpers
-    ├── io.py                 # split-file CSV I/O for ML estimates
+    ├── io.py                 # split-file CSV I/O for ML estimates (append mode)
     ├── fetch_data.py         # interactive data downloader
     └── vbr/                  # VBR core calculations (Python port of MATLAB VBRc)
         ├── core.py           # anelastic methods: andrade_psp, eburgers_psp, xfit_mxw, xfit_premelt
@@ -79,7 +81,7 @@ vbrc_V2Tpy/
         └── STW105noCrust_for_VBRc.txt  # STW105 without crust
 ```
 
-### Patagonia Test Case (workspace root, not in the package)
+### Patagonia 3D Test Case (`Patagonia_Test/`)
 
 ```
 Patagonia_Test/
@@ -89,21 +91,47 @@ Patagonia_Test/
 ├── 3_D_model_WashU.nc     # 3D Vs model (NetCDF)
 └── output/
     ├── sweep.npz              # shared parameter sweep
-    ├── sweep_fingerprint.json # config hash (sweep_generation section only)
-    ├── lut_plots/             # look-up table diagnostic plots
-    ├── inversion_results/     # default inversion output (run_tag: none)
-    └── inversion_<tag>/       # auto/custom-tagged inversion output (run_tag: auto|<str>)
-        ├── ml_estimates.csv
+    ├── sweep_fingerprint.json
+    ├── lut_plots/
+    └── inversion_<tag>/
+        ├── ml_estimates/          # split-file CSVs (coordinates, temperature, etc.)
+        ├── ml_estimates_nc/       # compressed 3-D NetCDF files (if save_ml_netcdf: true)
+        ├── _progress.txt          # depth-batch progress (for resume)
         ├── *_ensembles.pkl
         ├── patagonia_profiles_*.png
         └── posteriors/
 ```
 
+### GLADM35_ANT41PatTomo Global Test Case
+
+```
+GLADM35_ANT41PatTomo/
+├── config.yaml                       # global model inversion config
+├── config_1layer.yaml                # simplified single-layer config
+├── csv_to_netcdf.py                  # thin wrapper → postprocessing._cli_to_netcdf
+├── plot_global_maps.py               # thin wrapper → postprocessing._cli_plot_maps
+├── GLADM35_ANT41PatTomo_blended_3D.nc  # blended Vs model (NetCDF)
+└── output/
+    ├── sweep.npz
+    ├── sweep_fingerprint.json
+    └── inversion_<tag>/
+        ├── ml_estimates/          # 23M-row split-file CSVs
+        ├── ml_estimates_nc/       # compressed 3-D NetCDF
+        └── _progress.txt
+```
+
 ## 3. Python Environment
 
+### Local (Mac)
 - **Python:** 3.12 (via conda env `pyGMT2`)
-- **venv:** `/Users/ehightow/Research/V2T_Inversion/.venv/` (system Python 3.9.6)
-- **conda env (primary):** `pyGMT2` — Python 3.12, includes xarray, PyGMT 0.15, netCDF4
+- **conda env:** `pyGMT2` — Python 3.12, includes xarray, PyGMT 0.15, netCDF4
+
+### HPC (Anvil at Purdue)
+- **Python:** 3.12 (via conda env `vbrc`)
+- **Node specs:** 128 cores, 256 GB RAM per node
+- **conda env:** `vbrc` — Python 3.12, includes xarray, PyGMT 0.18, netCDF4
+
+### Common
 - **Key deps:** numpy, scipy, matplotlib, h5py (for .mat), xarray + netCDF4 (for NetCDF),
   PyGMT (for map plots), pandas
 - **Install:** `pip install -e .` from `vbrc_V2Tpy/`
@@ -111,7 +139,7 @@ Patagonia_Test/
 ## 4. How to Run
 
 ```bash
-cd /Users/ehightow/Research/V2T_Inversion
+cd /anvil/projects/x-ear160027/ehightow/V2T_Inversion
 
 # Sequential (default)
 python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml
@@ -119,14 +147,26 @@ python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml
 # Parallel (4 workers)
 python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml --parallel 4
 
-# Parallel (auto — all 16 cores)
+# Parallel (auto — all cores)
 python -m vbrc_V2Tpy.bayesian_fitting_py --config test_config.yaml -j 0
+```
+
+### Post-Processing CLI
+
+```bash
+# Convert split-file CSVs to compressed 3-D NetCDF
+vbrc-to-netcdf --csv path/to/ml_estimates/
+vbrc-to-netcdf  # auto-detects ml_estimates/ in current directory
+
+# Plot global Robinson-projection maps
+vbrc-plot-maps --depth 100 200 400
+vbrc-plot-maps --nc path/to/ml_estimates_nc/ --depth 50 100 --vars T_mean log10_eta_mean
 ```
 
 ### Validation Commands
 
 ```bash
-cd /Users/ehightow/Research/V2T_Inversion
+cd /anvil/projects/x-ear160027/ehightow/V2T_Inversion
 
 # Synthetic geotherm test — SC2006 continental geotherm
 python -m vbrc_V2Tpy.validation.syntheticTest_geotherm
@@ -169,7 +209,67 @@ All four methods verified against MATLAB output to floating-point precision:
 
 ## 6. Key Features Implemented
 
-### Recent Uncommitted Changes (2026-04-06)
+### Recent Changes (2026-04-09, branch `fix/parallel-shared-memory`)
+
+#### Depth-Batched Streaming Dispatch (`parallel.py`)
+- Locations are grouped by depth and processed one depth layer at a time via
+  `imap_unordered`, with results flushed to split-file CSVs after each batch.
+- Peak memory is bounded to ~1 depth slice regardless of total model size.
+- Pool uses an **initializer pattern** (`_init_worker`) to pass shared arrays
+  once per worker process, reducing per-task pickle overhead from MBs to ~200
+  bytes.
+- `on_batch_complete` callback in `run_parallel_inversions()` enables streaming
+  writes: each batch's DataFrame is appended to CSVs and then discarded.
+- `skip_depth_keys` parameter allows skipping already-completed depths for
+  resume support.
+
+#### Resume Support (`run_bayes.py`)
+- New `resume: bool` field in `InversionConfig`. When `True`, reads
+  `_progress.txt` (written after each depth batch) to determine which depths
+  are complete, then appends to existing CSVs.
+- Fallback: if `_progress.txt` is missing but CSVs exist, reconstructs
+  completed depths from unique `(z_min, z_max)` pairs in `coordinates.csv`.
+
+#### I/O Streaming (`io.py`)
+- `write_split_ml_csv()` gains an `append` parameter. When `True`, opens files
+  in `'a'` mode and skips headers if the file already exists.
+
+#### Post-Processing Module (`postprocessing.py` — NEW)
+- **`csv_to_netcdf()`**: converts `ml_estimates/` split CSVs into compressed
+  3-D NetCDF files (zlib level 4, float32) with CF-convention attributes.
+  Dimensions: `(z, lat, lon)`. One NetCDF per variable group (temperature,
+  melt, grainsize, viscosity, fit_quality).
+- **`plot_global_maps()`**: Robinson-projection (N) map grid using PyGMT
+  subplots — rows = depths, columns = variables. Uses `figsize`-based layout
+  with `fig.set_panel()` context manager.
+- **Data helpers**: `load_from_netcdf()`, `load_from_csv()`,
+  `build_3d_dataset()`, `find_data_source()` for auto-detecting output format.
+- **CLI entry points**: `vbrc-to-netcdf` and `vbrc-plot-maps` registered in
+  `pyproject.toml`.
+
+#### Auto-Convert to NetCDF (`run_bayes.py`)
+- New `save_ml_netcdf: bool` field in `InversionConfig`. When `True`,
+  automatically calls `csv_to_netcdf()` after streaming completes, writing
+  NetCDF files to `ml_estimates_nc/` next to the CSV directory.
+
+#### Package Integration (`__init__.py`, `pyproject.toml`)
+- Exports: `csv_to_netcdf`, `plot_global_maps`, `load_from_netcdf`,
+  `load_from_csv`, `build_3d_dataset`, `find_data_source`, `VARIABLE_GROUPS`,
+  `DEFAULT_PLOT_VARS`.
+- New console_scripts: `vbrc-to-netcdf`, `vbrc-plot-maps`.
+
+#### Shared-Memory Pool Initializer (`parallel.py`)
+- Replaces per-task pickling of large arrays with a Pool `initializer` that
+  stores shared data in module-level `_shared` globals. Workers access
+  shared arrays via copy-on-write (fork mode on Linux).
+- Lightweight results mode (`lightweight_results`) skips returning large
+  posterior arrays, further reducing memory.
+
+#### Tested at Scale
+- GLADM35_ANT41PatTomo: 23,097,632 points (601 lat × 1201 lon × 32 depths,
+  10–650 km) on 96 cores in ~5 hours with stable memory on Anvil HPC.
+
+### Previous Changes (2026-04-06)
 
 #### Run Tag Feature (`run_tag` in InversionConfig)
 - **New `run_tag` config field** (default `'none'`): controls the inversion
@@ -563,13 +663,18 @@ Vs_chi2, Q_obs, Q_pred, Q_misfit, Q_chi2, chi2_total`
 - Normalizes `sweep['gs']` by `gsref` during prior computation
 This prevented naive parallelization. `parallel.py` solves this by
 pre-computing everything into read-only copies before dispatching workers.
+The Pool initializer pattern (`_init_worker` / `_shared`) stores shared data
+in module-level globals accessible via copy-on-write (fork mode on Linux),
+reducing per-task pickle overhead from MBs to ~200 bytes.
 
 ### Key Functions
 - `run_bayesian_inversion(config)` — main entry point (run_bayes.py)
 - `fit_preloaded_observations(obs_vs, sigma_vs, ...)` — single location fit (fitting.py)
 - `extract_ml_estimates(posterior, sweep, method)` — ML + posterior stats (fitting.py)
-- `run_locations_parallel(locations, ..., n_workers)` — parallel dispatcher (parallel.py)
+- `run_locations_parallel(locations, ..., n_workers)` — depth-batched streaming dispatch (parallel.py)
 - `probability_distributions(type, ...)` — likelihood/posterior math (probability.py)
+- `csv_to_netcdf(csv_dir)` — convert split CSVs to 3-D NetCDF (postprocessing.py)
+- `plot_global_maps(ds, depths, variables)` — Robinson-projection map grid (postprocessing.py)
 
 ## 8. Known Issues / Active Investigations
 
@@ -602,12 +707,6 @@ size was set too large, leading to excessively high viscosity.
 - The mineral assemblage volume fractions are approximate (assembled from
   general knowledge); users should verify against preferred sources.
 
-### KNOWN ISSUE — PyGMT 0.15 subplot API incompatibility
-- `plot_map_results.py` uses manual `fig.shift_origin()` instead of `fig.subplot()`
-  because PyGMT 0.15's subplot API does not correctly handle multi-panel layouts
-  with per-panel colour maps and selective axis labelling.
-- Workaround is stable but less elegant than native subfigure support.
-
 ### Other Issues
 - **Synthetic adiabat test produces noisier results than roundtrip test** — this
   is expected and by design. The roundtrip test commits an "inverse crime":
@@ -618,9 +717,6 @@ size was set too large, leading to excessively high viscosity.
   due to grid discretization, non-linear interpolation error, and frequency
   averaging differences. The adiabat test reveals the true resolution limits
   of the grid-based Bayesian approach.
-- The `xarray` import in `data_processing.py` requires the correct conda env
-  (`pyGMT2`) to be active, not just the `.venv`. Running with the wrong env
-  gives `ModuleNotFoundError: No module named 'xarray'`.
 - Parallel mode only works for preloaded (model-based) location modes, not for
   `manual` or `locations_file` modes (those use `fit_seismic_observations`
   which loads .mat files per-location).
@@ -632,13 +728,14 @@ size was set too large, leading to excessively high viscosity.
 
 ## 9. Test Results
 
-| Test | Time (sequential) | Time (4 workers) | Locations × Methods |
-|------|-------------------|-------------------|---------------------|
-| WashU tomo (test_config.yaml) | ~22 min | ~8 min | 3168 × 4 |
-| 2-location eta test | ~30s | N/A (manual mode) | 2 × 2 |
-| Patagonia 3D (run_patagonia.py) | — | ~hours (16 cores) | ~12,672 × 1 |
+| Test | Time (sequential) | Time (parallel) | Locations × Methods | Notes |
+|------|-------------------|-----------------|---------------------|-------|
+| 2-location eta test | ~30s | N/A (manual mode) | 2 × 2 | |
+| Patagonia 3D (run_patagonia.py) | — | ~0.45 seconds (128 cores) | ~50,800 × 1 | |
+| GLADM35_ANT41PatTomo (global) | — | ~5 hours (96 cores) | 23,097,632 × 1 | Depth-batched streaming, 128-core node |
 
 Parallel and sequential CSV outputs are byte-for-byte identical (verified with `diff`).
+Depth-batched streaming produces identical results to all-at-once dispatch.
 
 ## 10. Patagonia Test Case Details
 
@@ -666,23 +763,56 @@ Patagonia_Test/output/
 ├── sweep_fingerprint.json
 ├── lut_plots/
 └── inversion_eburgers_psp_Tgeo100_gsLU_phiU_VsQ_qe100/
-    ├── ml_estimates.csv        # 28-column results
+    ├── ml_estimates/           # split-file CSVs (streaming output)
+    │   ├── coordinates.csv
+    │   ├── temperature.csv
+    │   ├── melt.csv
+    │   ├── grainsize.csv
+    │   ├── viscosity.csv
+    │   └── fit_quality.csv
+    ├── ml_estimates_nc/        # compressed 3-D NetCDF (if save_ml_netcdf: true)
+    │   ├── temperature.nc
+    │   ├── melt.nc
+    │   ├── grainsize.nc
+    │   ├── viscosity.nc
+    │   └── fit_quality.nc
+    ├── _progress.txt           # depth-batch progress for resume
     ├── *_ensembles.pkl
     ├── patagonia_profiles_*.png
     └── posteriors/
 ```
 
-### Map Plot Usage (`plot_map_results.py`)
+## 11. GLADM35_ANT41PatTomo Global Test Case
+
+### Configuration (`GLADM35_ANT41PatTomo/config.yaml`)
+- **Vs model**: Blended GLAD-M35 / ANT41 3D tomography (NetCDF)
+- **Q model**: `stw105_nocrust` (built-in 1D)
+- **Elastic method**: `cammarano2003`
+- **Density model**: `stw105_nocrust`
+- **Solidus**: `yk2001`
+- **Direct melt effect**: YT2024 (`include_direct_melt_effect: 1`)
+- **Depth range**: 10–650 km (32 depth layers, 5 km spacing)
+- **Grid**: 601 lat × 1201 lon = 721,801 points per depth, 23,097,632 total
+- **Anelastic method**: `eburgers_psp`
+- **T prior**: geotherm (SC2006, σ = 100°C)
+- **Run tag**: `auto`
+
+### Performance
+- **96 cores** on Anvil HPC (shared partition, 128 available)
+- **~5 hours** total inversion time (depth-batched streaming)
+- **Stable memory** throughout — depth-batching bounds peak to ~1 depth slice
+- Split-file CSVs: ~23M rows each, ~3.5 GB total
+- NetCDF files: ~500 MB total (zlib compressed)
+
+### Post-Processing
 ```bash
-# Single depth
-python Patagonia_Test/plot_map_results.py --depth 100
+# Convert CSVs to NetCDF
+python GLADM35_ANT41PatTomo/csv_to_netcdf.py --csv path/to/ml_estimates/
 
-# Multiple depths (one row per depth)
-python Patagonia_Test/plot_map_results.py --depth 50 100 200
+# Plot global maps at selected depths
+python GLADM35_ANT41PatTomo/plot_global_maps.py --depth 100 200 400
 
-# Custom variables and region
-python Patagonia_Test/plot_map_results.py \
-    --depth 80 150 \
-    --vars T_mean log10_eta_mean phi_mean \
-    --region -77 -64 -57 -42
+# Or use the installed CLI entry points
+vbrc-to-netcdf --csv path/to/ml_estimates/
+vbrc-plot-maps --nc path/to/ml_estimates_nc/ --depth 100 200 400
 ```
