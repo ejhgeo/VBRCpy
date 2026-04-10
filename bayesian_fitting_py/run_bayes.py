@@ -175,6 +175,18 @@ class InversionConfig:
     # {output_dir}/ml_estimates.csv so that the user only needs to
     # set output_dir once.
     ml_csv_file: Optional[str] = None
+
+    # Resume a previously interrupted streaming run.  When True, the
+    # code reads the progress file written by depth-batched streaming
+    # to skip already-completed depths and appends to existing CSVs.
+    # When False (default), existing CSVs are wiped and the run starts
+    # from scratch.
+    resume: bool = False
+
+    # Automatically convert ML-estimate CSVs to compressed 3-D NetCDF
+    # files after a streaming run completes.  The NetCDFs are written to
+    # ``ml_estimates_nc/`` next to the CSV directory.
+    save_ml_netcdf: bool = False
     
     # Parallelization: number of worker processes for large-scale runs.
     # 0 = auto (use all available CPU cores), 1 = sequential (no parallelization),
@@ -789,6 +801,98 @@ def run_bayesian_inversion(
         if use_preloaded and n_workers > 1:
             import time as _time
             _t0 = _time.time()
+
+            _use_streaming = large_scale_run and n_locations > 1000
+
+            # ── Streaming callback for large-scale runs ──
+            # Flushes CSV records to disk after each depth batch and
+            # discards them so memory stays bounded.
+            _streaming_csv_parent = None
+            _streaming_n_errors = 0
+            _streaming_batch_count = 0
+            _streaming_n_ok = 0
+
+            if _use_streaming:
+                from .io import write_split_ml_csv as _write_csv
+                if config.ml_csv_file:
+                    _streaming_csv_parent = os.path.dirname(
+                        os.path.abspath(config.ml_csv_file)
+                    )
+                else:
+                    _streaming_csv_parent = inversion_dir
+
+                _est_dir = os.path.join(_streaming_csv_parent, 'ml_estimates')
+                _progress_file = os.path.join(_est_dir, '_progress.txt')
+                _completed_depths: set = set()
+
+                if config.resume:
+                    # Try to read completed depths from progress file
+                    if os.path.isfile(_progress_file):
+                        with open(_progress_file, 'r') as _pf:
+                            for _line in _pf:
+                                _line = _line.strip()
+                                if _line:
+                                    _parts = _line.split(',')
+                                    if len(_parts) == 2:
+                                        _completed_depths.add(
+                                            (float(_parts[0]), float(_parts[1]))
+                                        )
+
+                    # Fallback: if no progress file (or it was empty),
+                    # reconstruct from existing coordinates.csv
+                    if not _completed_depths:
+                        _coords_csv = os.path.join(_est_dir, 'coordinates.csv')
+                        if os.path.isfile(_coords_csv):
+                            import csv as _csv
+                            with open(_coords_csv, 'r') as _cf:
+                                _reader = _csv.DictReader(_cf)
+                                for _row in _reader:
+                                    if 'z_min' in _row and 'z_max' in _row:
+                                        _completed_depths.add(
+                                            (float(_row['z_min']),
+                                             float(_row['z_max']))
+                                        )
+                            # Write a progress file so future resumes are faster
+                            os.makedirs(_est_dir, exist_ok=True)
+                            with open(_progress_file, 'w') as _pf:
+                                for _dk in sorted(_completed_depths):
+                                    _pf.write(f"{_dk[0]},{_dk[1]}\n")
+
+                    if _completed_depths:
+                        print(f"     Resume: {len(_completed_depths)} depth "
+                              f"batches already completed, skipping them.")
+                    else:
+                        print("     Resume: no previous progress found, "
+                              "starting from scratch.")
+                else:
+                    # Clean any leftover CSVs from a previous run so
+                    # append mode doesn't concatenate onto stale data.
+                    if os.path.isdir(_est_dir):
+                        import glob as _glob
+                        for _old in _glob.glob(os.path.join(_est_dir, '*.csv')):
+                            os.remove(_old)
+                        # Also remove stale progress file
+                        if os.path.isfile(_progress_file):
+                            os.remove(_progress_file)
+
+            def _on_batch(batch_results, depth_key):
+                nonlocal _streaming_n_errors, _streaming_batch_count, _streaming_n_ok
+                batch_records = []
+                for res in batch_results:
+                    if res is None:
+                        _streaming_n_errors += 1
+                        continue
+                    _streaming_n_ok += 1
+                    if res.get('record') is not None:
+                        batch_records.append(res['record'])
+                if batch_records and _streaming_csv_parent is not None:
+                    _write_csv(batch_records, _streaming_csv_parent, append=True)
+                # Record this depth as completed for resume support
+                os.makedirs(os.path.dirname(_progress_file), exist_ok=True)
+                with open(_progress_file, 'a') as _pf:
+                    _pf.write(f"{depth_key[0]},{depth_key[1]}\n")
+                _streaming_batch_count += 1
+
             par_results = run_locations_parallel(
                 locations, names, z_ranges,
                 seismic_model_data, sweep, anelastic_method,
@@ -798,63 +902,85 @@ def run_bayesian_inversion(
                 use_q=use_q,
                 melt_fraction_prior=melt_fraction_prior,
                 temperature_prior=temperature_prior,
-                lightweight_results=(large_scale_run and n_locations > 1000),
+                lightweight_results=_use_streaming,
+                on_batch_complete=_on_batch if _use_streaming else None,
+                skip_depth_keys=_completed_depths if _use_streaming else None,
             )
             _elapsed = _time.time() - _t0
             print(f"     {anelastic_method} completed in {_elapsed:.1f}s ({n_workers} workers)")
 
-            # Collect results back into the same data structures
-            n_par_errors = sum(1 for r in par_results if r is None)
-            n_errors += n_par_errors
-            for res in par_results:
-                if res is None:
-                    continue
-                locname = res['locname']
-                ml_est = res['ml_est']
-                ml_estimates[anelastic_method][locname] = ml_est
+            if _use_streaming:
+                # Results were already flushed to disk by the callback.
+                n_errors += _streaming_n_errors
+                if _streaming_csv_parent is not None:
+                    _est_dir = os.path.join(_streaming_csv_parent, 'ml_estimates')
+                    print(f"\n     ML estimates streamed to {_est_dir}/ "
+                          f"({_streaming_batch_count} depth batches, "
+                          f"{_streaming_n_ok} locations)")
 
-                if res['record'] is not None:
-                    ml_records.append(res['record'])
+                    # Auto-convert to NetCDF if requested
+                    if config.save_ml_netcdf:
+                        from .postprocessing import csv_to_netcdf
+                        print("\n     Converting CSVs to NetCDF ...")
+                        csv_to_netcdf(_est_dir)
 
-                if not large_scale_run or n_locations <= 1000:
-                    # Build a minimal posterior-like dict for store_ensemble
-                    post_stub = {
-                        'phi': res['posterior_phi'],
-                        'T': res['posterior_T'],
-                    }
-                    ensemble_pdf = store_ensemble(
-                        ensemble_pdf, locname, anelastic_method,
-                        res['p_joint'], post_stub, include_mxw=True,
-                    )
-                    ensemble_pdf_no_mxw = store_ensemble(
-                        ensemble_pdf_no_mxw, locname, anelastic_method,
-                        res['p_joint'], post_stub, include_mxw=False,
-                    )
-                    regional_fits[anelastic_method][locname] = {
-                        'p_joint': res['p_joint'],
-                        'phi_post': res['posterior_phi'],
-                        'T_post': res['posterior_T'],
-                    }
-
-            # Generate posterior plots for parallel results (if requested)
-            if save_individual_plots:
-                obs_label = config.obs_types.replace('VsQ', 'VQ').replace('both', 'VQ')
-                n_plotted = 0
+                # Mark that CSV writing is already done so the final
+                # write_split_ml_csv call is skipped for this method.
+                _streaming_csv_done = True
+            else:
+                _streaming_csv_done = False
+                # Collect results back into the same data structures
+                n_par_errors = sum(1 for r in par_results if r is None)
+                n_errors += n_par_errors
                 for res in par_results:
                     if res is None:
                         continue
-                    if res['il'] % config.plot_every_n != 0:
-                        continue
-                    depth_km = None
-                    if use_preloaded and seismic_model_data.depths is not None:
-                        depth_km = float(seismic_model_data.depths[res['il']])
-                    save_figure_for_posterior(
-                        res['posterior'], sweep, res['locname'],
-                        anelastic_method, output_dir, obs_label,
-                        depth_km=depth_km,
-                    )
-                    n_plotted += 1
-                print(f"     Saved {n_plotted} posterior plots to {output_dir}/")
+                    locname = res['locname']
+                    ml_est = res['ml_est']
+                    ml_estimates[anelastic_method][locname] = ml_est
+
+                    if res['record'] is not None:
+                        ml_records.append(res['record'])
+
+                    if not large_scale_run or n_locations <= 1000:
+                        # Build a minimal posterior-like dict for store_ensemble
+                        post_stub = {
+                            'phi': res['posterior_phi'],
+                            'T': res['posterior_T'],
+                        }
+                        ensemble_pdf = store_ensemble(
+                            ensemble_pdf, locname, anelastic_method,
+                            res['p_joint'], post_stub, include_mxw=True,
+                        )
+                        ensemble_pdf_no_mxw = store_ensemble(
+                            ensemble_pdf_no_mxw, locname, anelastic_method,
+                            res['p_joint'], post_stub, include_mxw=False,
+                        )
+                        regional_fits[anelastic_method][locname] = {
+                            'p_joint': res['p_joint'],
+                            'phi_post': res['posterior_phi'],
+                            'T_post': res['posterior_T'],
+                        }
+
+                # Generate posterior plots for parallel results (if requested)
+                if save_individual_plots:
+                    obs_label = config.obs_types.replace('VsQ', 'VQ').replace('both', 'VQ')
+                    n_plotted = 0
+                    for res in par_results:
+                        if res is None:
+                            continue
+                        if res['il'] % config.plot_every_n != 0:
+                            continue
+                        depth_km = None
+                        if use_preloaded and seismic_model_data.depths is not None:
+                            depth_km = float(seismic_model_data.depths[res['il']])
+                        save_figure_for_posterior(
+                            res['posterior'], sweep, res['locname'],
+                            anelastic_method, output_dir, obs_label,
+                            depth_km=depth_km,
+                        )
+                        n_plotted += 1
+                    print(f"     Saved {n_plotted} posterior plots to {output_dir}/")
 
             continue  # next anelastic_method — skip the sequential loop below
         
@@ -1124,6 +1250,7 @@ def run_bayesian_inversion(
     }
     
     # Save ML estimates to split CSV files if requested
+    # (skip if streaming already flushed records to disk per depth batch)
     if config.save_ml_csv and ml_records:
         from .io import write_split_ml_csv
         # If user set ml_csv_file explicitly, use that directory;

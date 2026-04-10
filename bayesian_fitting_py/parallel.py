@@ -12,7 +12,8 @@ keeps per-task pickle size to ~200 bytes regardless of sweep dimensions.
 """
 
 import numpy as np
-from typing import Dict, Any, Tuple, Optional, List
+from collections import defaultdict
+from typing import Callable, Dict, Any, Tuple, Optional, List
 
 from .probability import probability_distributions
 from .prior import make_param_grid, prep_gs_lognormal, prior_model_probs
@@ -370,6 +371,8 @@ def run_locations_parallel(
     melt_fraction_prior: Optional[MeltFractionPrior] = None,
     temperature_prior: Optional[TemperaturePrior] = None,
     lightweight_results: bool = False,
+    on_batch_complete: Optional[Callable[[List[Optional[Dict[str, Any]]], Tuple[float, float]], None]] = None,
+    skip_depth_keys: Optional[set] = None,
 ) -> List[Optional[Dict[str, Any]]]:
     """
     Process all locations for one anelastic method, optionally in parallel.
@@ -386,6 +389,15 @@ def run_locations_parallel(
         Melt fraction prior configuration.
     temperature_prior : TemperaturePrior, optional
         Temperature prior configuration.
+    lightweight_results : bool
+        If True, workers return only scalar ML estimates (no posterior arrays).
+    on_batch_complete : callable, optional
+        If provided, called after each depth batch with
+        ``(batch_results, depth_key)``.  Results for that batch are then
+        discarded to free memory.  The function returns an empty list.
+    skip_depth_keys : set, optional
+        Set of (z_min, z_max) tuples for depth batches to skip (already
+        completed in a previous run).  Only used with depth-batched dispatch.
     """
     if not use_vs and not use_q:
         raise ValueError("At least one of use_vs or use_q must be True")
@@ -569,36 +581,134 @@ def run_locations_parallel(
         import multiprocessing as mp
         import time as _time
 
-        print(f"     Dispatching {n_locations} locations across {n_workers} workers...")
-        chunksize = max(1, n_locations // (n_workers * 4))
-        results = [None] * n_locations
-        n_done = 0
-        report_interval = max(1, n_locations // 20)  # ~5% increments
-        t_start = _time.time()
+        # Group jobs by depth key index for depth-batched dispatch
+        depth_groups: Dict[int, List[Tuple[int, Tuple]]] = defaultdict(list)
+        for global_idx, args in enumerate(job_args):
+            dk_idx = args[12]  # depth_key_idx field
+            depth_groups[dk_idx].append((global_idx, args))
 
-        with mp.Pool(
-            processes=n_workers,
-            initializer=_init_worker,
-            initargs=(shared_data,),
-        ) as pool:
-            for res in pool.imap_unordered(
-                _process_one_location_indexed, enumerate(job_args), chunksize=chunksize
-            ):
-                idx, result = res
-                results[idx] = result
-                n_done += 1
-                if n_done % report_interval == 0 or n_done == n_locations:
-                    elapsed = _time.time() - t_start
-                    rate = n_done / elapsed if elapsed > 0 else 0
-                    eta = (n_locations - n_done) / rate if rate > 0 else 0
+        n_depths = len(depth_groups)
+        use_depth_batching = on_batch_complete is not None
+
+        if use_depth_batching:
+            # ── Depth-batched dispatch (one Pool per depth layer) ──
+            results: List[Optional[Dict[str, Any]]] = []
+            n_done_total = 0
+            t_start = _time.time()
+
+            for batch_num, dk_idx in enumerate(sorted(depth_groups.keys())):
+                depth_key = depth_keys_list[dk_idx]
+
+                # Skip depths already completed in a previous run
+                if skip_depth_keys and depth_key in skip_depth_keys:
+                    group = depth_groups[dk_idx]
+                    n_done_total += len(group)
                     print(
-                        f"     [{n_done}/{n_locations}] "
-                        f"{100*n_done/n_locations:.0f}% done — "
-                        f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining "
-                        f"({rate:.1f} loc/s)"
+                        f"     Depth {batch_num+1}/{n_depths} "
+                        f"({depth_key[0]:.0f}\u2013{depth_key[1]:.0f} km): "
+                        f"SKIPPED (already completed)"
                     )
+                    continue
 
-        n_ok = sum(1 for r in results if r is not None)
-        print(f"     Completed {n_ok}/{n_locations} locations successfully")
+                group = depth_groups[dk_idx]
+                batch_size = len(group)
+
+                # Build shared data with only this depth's arrays
+                batch_shared = {
+                    'precomputed_list': [precomputed_list[dk_idx]],
+                    'sweep_vectors': sweep_vectors,
+                    'prior_list': [prior_list[dk_idx]],
+                    'prior_no_melt_list': [prior_no_melt_list[dk_idx]],
+                    'lightweight_results': lightweight_results,
+                }
+
+                # Rewrite args to use index 0 (single-element lists)
+                batch_args = []
+                for _global_idx, orig_args in group:
+                    rewritten = list(orig_args)
+                    rewritten[12] = 0  # depth_key_idx → 0
+                    rewritten[13] = 0  # prior_idx → 0
+                    batch_args.append(tuple(rewritten))
+
+                chunksize = max(1, batch_size // (n_workers * 4))
+                batch_results = [None] * batch_size
+                n_done_batch = 0
+                report_interval = max(1, batch_size // 10)
+
+                elapsed_total = _time.time() - t_start
+                print(
+                    f"     Depth {batch_num+1}/{n_depths} "
+                    f"({depth_key[0]:.0f}–{depth_key[1]:.0f} km): "
+                    f"{batch_size} locations "
+                    f"[{n_done_total}/{n_locations} total, "
+                    f"{elapsed_total:.0f}s elapsed]"
+                )
+
+                with mp.Pool(
+                    processes=n_workers,
+                    initializer=_init_worker,
+                    initargs=(batch_shared,),
+                ) as pool:
+                    for res in pool.imap_unordered(
+                        _process_one_location_indexed,
+                        enumerate(batch_args),
+                        chunksize=chunksize,
+                    ):
+                        idx, result = res
+                        batch_results[idx] = result
+                        n_done_batch += 1
+                        n_done_total += 1
+                        if n_done_batch % report_interval == 0 or n_done_batch == batch_size:
+                            elapsed = _time.time() - t_start
+                            rate = n_done_total / elapsed if elapsed > 0 else 0
+                            eta = (n_locations - n_done_total) / rate if rate > 0 else 0
+                            print(
+                                f"       [{n_done_total}/{n_locations}] "
+                                f"{100*n_done_total/n_locations:.0f}% done — "
+                                f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining "
+                                f"({rate:.1f} loc/s)"
+                            )
+
+                # Flush this batch via callback, then discard
+                on_batch_complete(batch_results, depth_key)
+                del batch_results
+
+            n_ok = n_done_total  # approximate; callback handles counting
+            print(f"     Completed {n_done_total}/{n_locations} locations "
+                  f"across {n_depths} depth layers")
+
+        else:
+            # ── Single-pool dispatch (original behavior, small runs) ──
+            print(f"     Dispatching {n_locations} locations across {n_workers} workers...")
+            chunksize = max(1, n_locations // (n_workers * 4))
+            results = [None] * n_locations
+            n_done = 0
+            report_interval = max(1, n_locations // 20)  # ~5% increments
+            t_start = _time.time()
+
+            with mp.Pool(
+                processes=n_workers,
+                initializer=_init_worker,
+                initargs=(shared_data,),
+            ) as pool:
+                for res in pool.imap_unordered(
+                    _process_one_location_indexed, enumerate(job_args), chunksize=chunksize
+                ):
+                    idx, result = res
+                    results[idx] = result
+                    n_done += 1
+                    if n_done % report_interval == 0 or n_done == n_locations:
+                        elapsed = _time.time() - t_start
+                        rate = n_done / elapsed if elapsed > 0 else 0
+                        eta = (n_locations - n_done) / rate if rate > 0 else 0
+                        print(
+                            f"     [{n_done}/{n_locations}] "
+                            f"{100*n_done/n_locations:.0f}% done — "
+                            f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining "
+                            f"({rate:.1f} loc/s)"
+                        )
+
+            n_ok = sum(1 for r in results if r is not None)
+            print(f"     Completed {n_ok}/{n_locations} locations successfully")
 
     return results

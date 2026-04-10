@@ -40,6 +40,16 @@ from .plotting import generate_colors
 from .run_bayes import run_bayesian_inversion, InversionConfig
 from .orchestration import run_sweep_step, replot_lut, run_inversion_step
 from .io import write_split_ml_csv, load_ml_estimates, find_ml_estimates
+from .postprocessing import (
+    csv_to_netcdf,
+    plot_global_maps,
+    load_from_netcdf,
+    load_from_csv,
+    build_3d_dataset,
+    find_data_source,
+    VARIABLE_GROUPS,
+    DEFAULT_PLOT_VARS,
+)
 
 # VBR module for sweep generation
 from .vbr import VBR
@@ -70,6 +80,15 @@ __all__ = [
     "write_split_ml_csv",
     "load_ml_estimates",
     "find_ml_estimates",
+    # Post-processing
+    "csv_to_netcdf",
+    "plot_global_maps",
+    "load_from_netcdf",
+    "load_from_csv",
+    "build_3d_dataset",
+    "find_data_source",
+    "VARIABLE_GROUPS",
+    "DEFAULT_PLOT_VARS",
     # VBR sweep generation
     "VBR",
 ]
