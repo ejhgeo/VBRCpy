@@ -1,18 +1,20 @@
-# VBRCpy — Bayesian Seismic Inversion (Python)
+# VBRCpy — Very Broadband Rheology Calculator (Python)
+## Bayesian Inference of Mantle Properties from Seismic Models
 
-Python translation of the MATLAB [VBR Calculator](https://github.com/vbr-calc/vbr)
-bayesian_fitting project for estimating temperature, melt fraction, grain size,
-and **viscosity** from seismic Vs and Q observations using Bayesian inference.
+Python implementation of the MATLAB [VBR Calculator](https://github.com/vbr-calc/vbr)
+for estimating temperature, melt fraction, grain size, and **viscosity** from seismic 
+Vs and Q observations using Bayesian inference.
 
-All four anelastic methods (`andrade_psp`, `eburgers_psp`, `xfit_mxw`,
-`xfit_premelt`) have been verified against the original MATLAB VBR calculator
-to machine precision (0.000000% difference) across a full parameter sweep
-of temperature, grain size, melt fraction, and depth.
+Solutions have been verified against the original MATLAB VBR calculator
+to machine precision across a full parameter sweep of temperature, grain size, 
+melt fraction, varying with depth.
 
-Designed to scale from single locations to global tomography models with
-built-in **multiprocessing support** for large-scale runs.  Depth-batched
-streaming dispatch with resume capability enables inversion of 23M+ grid
-points on HPC clusters with bounded memory.
+Designed to scale from calculations at single locations to processing global tomography 
+models with built-in **multiprocessing support** for large-scale runs. Depth-batched
+streaming dispatch with resume capability enables inversion of 23M+ grid points on HPC 
+clusters with bounded memory.
+
+See **Features** list below for full capabilities. 
 
 ## Quick Start
 
@@ -176,11 +178,8 @@ python -m VBRCpy.validation.syntheticTest_geotherm --replot-lut
 ```
 
 The synthetic geotherm test uses an independent VBR core computation (not grid
-lookup) to generate observations from a realistic continental geotherm (Steinberger & Calderwood, 2006),
-avoiding the "inverse crime" of inverting on the same grid used to generate the
-data.  It includes a cold lithospheric lid, thermal boundary layer, and
-convecting interior.  See
-[validation/syntheticTest_geotherm/README.md](validation/syntheticTest_geotherm/README.md)
+lookup) to generate observations from a realistic continental geotherm (Steinberger & Calderwood, 2006).
+See [validation/syntheticTest_geotherm/README.md](validation/syntheticTest_geotherm/README.md)
 for details.
 
 All validation output is written to `validation_tests/` in the workspace

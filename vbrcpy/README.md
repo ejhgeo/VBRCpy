@@ -1,12 +1,12 @@
 # Bayesian Fitting for Seismic Inversion (Python)
 
-Python translation of the MATLAB VBR bayesian_fitting project for estimating
-temperature, melt fraction, grain size, and **viscosity** from seismic Vs and Q
-observations using Bayesian inference.
+Python implementation of the MATLAB [VBR Calculator](https://github.com/vbr-calc/vbr)
+for estimating temperature, melt fraction, grain size, and **viscosity** from seismic 
+Vs and Q observations using Bayesian inference.
 
-All four anelastic methods (`andrade_psp`, `eburgers_psp`, `xfit_mxw`,
-`xfit_premelt`) have been verified against the original MATLAB VBR calculator
-to floating-point precision across a full parameter sweep.
+Solutions have been verified against the original MATLAB VBR calculator
+to machine precision across a full parameter sweep of temperature, grain size, 
+melt fraction, varying with depth.
 
 ## Overview
 
@@ -17,8 +17,7 @@ This package provides tools to:
 - Combine results across multiple anelastic calculation methods
 - Scale from single locations to **23M+ grid point** global models with
   **depth-batched streaming** parallel dispatch and resume support
-- Convert results to compressed 3-D **NetCDF** files and plot global
-  **Robinson-projection maps** via PyGMT
+- Convert results to compressed 3-D **NetCDF** files and plot global maps via PyGMT
 - Generate publication-quality figures
 
 ## Installation
@@ -137,7 +136,8 @@ The `name` column is optional - if omitted, points are named `point_0`, `point_1
 
 ### 3. Model Mode
 
-Load both locations AND seismic observations from a single file.
+Load both locations AND seismic observations from a single file. This is the
+location mode that most users will want to use.
 The file format is **auto-detected** from the extension (.csv, .mat, .nc):
 
 ```bash
@@ -184,14 +184,14 @@ python -m vbrcpy --location-mode model --vs-file model.csv --default-vs-error 0.
 ### Large-Scale Runs
 
 When processing >20 locations:
-- Individual plots are automatically suppressed to save time
-- Progress is reported every 10 locations
+- Individual posterior plots are automatically suppressed to save time
+- Progress is can be reported every x locations (--model-subsample)
 - Results are saved to CSV for easy analysis
-- A summary of T and φ ranges is printed instead of full tables
+- A summary of state variable ranges is printed instead of full tables
 
 ```bash
 # Large model with CSV output
-python -m vbrcpy --location-mode csv_model --seismic-model-file model.csv --save-csv --csv-file my_results.csv
+python -m vbrcpy --location-mode model --save-csv --csv-file my_results.csv
 ```
 
 ### Parallel Processing
@@ -363,7 +363,7 @@ fetch-vbr-data --data-dir /path/to/parent
 
 ## Data Requirements
 
-The package expects the following data files in `./data/`:
+The package may look for the following data files in `./data/`:
 
 - `vel_models/Shen_Ritzwoller_2016.mat` - Vs model
 - `Q_models/Dalton_Ekstrom_2008.mat` - Q model  
@@ -620,7 +620,7 @@ The inversion produces:
 - Regional fits showing T-φ tradeoffs across methods
 - Ensemble PDFs combining results across methods
 - Pickled results file for further analysis
-- **CSV file** with ML estimates for all locations and methods
+- **CSV file** with results and statistics  for all locations and methods
 
 ### CSV Output Columns
 
@@ -694,17 +694,15 @@ geotherm_std_C: 200.0        # Gaussian σ in °C
 
 ## Original MATLAB Code
 
-This is a Python translation of the MATLAB code in:
-`vbr/Projects/bayesian_fitting/`
-
 The original VBR calculator is available at:
 https://github.com/vbr-calc/vbr
 
 ## Citation
 
-If you use this code, please cite the VBR calculator and relevant papers
-describing the anelastic methods used.
+If you use this software, please cite it using the metadata in
+[CITATION.cff](CITATION.cff).  Please also cite the VBR calculator and
+relevant papers describing the anelastic methods used.
 
 ## License
 
-Same license as the parent VBR project.
+MIT License. See [LICENSE](LICENSE) for details.
