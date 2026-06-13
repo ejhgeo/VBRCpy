@@ -6,6 +6,7 @@ authors:
   - family-names: "Hightower"
     given-names: "Erin"
 version: "1.0.0"
+doi: 10.5281/zenodo.20674159
 date-released: "2026-06-12"
 license: MIT
 repository-code: "https://github.com/ejhgeo/VBRCpy"
