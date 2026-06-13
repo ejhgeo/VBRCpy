@@ -194,8 +194,10 @@ pip uninstall vbrcpy
 ## Citation
 
 If you use this software, please cite it using the metadata in
-[CITATION.cff](CITATION.cff).  Please also cite the VBR calculator and
-relevant papers describing the anelastic methods used.
+[CITATION.cff](CITATION.cff).  Please also cite the original MATLAB VBR calculator and
+relevant papers describing the methods used.
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20674159.svg)](https://doi.org/10.5281/zenodo.20674159)
 
 ## License
 
