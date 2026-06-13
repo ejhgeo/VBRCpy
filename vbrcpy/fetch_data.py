@@ -13,9 +13,9 @@ from typing import List, Optional
 
 BASE_URL = 'https://github.com/vbr-calc/vbrPublicData/raw/master/LAB_fitting_bayesian/data'
 
-# Package-relative default: vbrc_V2Tpy/ (parent of bayesian_fitting_py/)
-_PACKAGE_DIR = Path(__file__).resolve().parent          # bayesian_fitting_py/
-_DEFAULT_DATA_PARENT = str(_PACKAGE_DIR.parent)         # vbrc_V2Tpy/
+# Package-relative default: VBRCpy/ (parent of vbrcpy/)
+_PACKAGE_DIR = Path(__file__).resolve().parent          # vbrcpy/
+_DEFAULT_DATA_PARENT = str(_PACKAGE_DIR.parent)         # VBRCpy/
 
 
 def build_project_directories(data_dir: str = './data') -> None:
@@ -75,7 +75,7 @@ def fetch_data(data_dir_parent: Optional[str] = None) -> None:
     data_dir_parent : str, optional
         Parent directory for the data folder.  When *None* (the default),
         data is placed under the package install directory
-        (``vbrc_V2Tpy/data/``).
+        (``VBRCpy/data/``).
     """
     if data_dir_parent is None:
         data_dir_parent = _DEFAULT_DATA_PARENT

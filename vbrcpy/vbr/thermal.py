@@ -16,9 +16,9 @@ from .params import C2K
 R_EARTH_M = 6371e3  # Earth radius in meters
 
 # Resolve the reference-models directory:
-# <package_root> = bayesian_fitting_py/  (parent of vbr/)
+# <package_root> = vbrcpy/  (parent of vbr/)
 # data lives at  <package_root>/../data/reference_models/
-_VBR_DIR = Path(__file__).resolve().parent           # bayesian_fitting_py/vbr/
+_VBR_DIR = Path(__file__).resolve().parent           # vbrcpy/vbr/
 _REF_MODELS_DIR = _VBR_DIR.parent.parent / 'data' / 'reference_models'
 
 # Mapping of built-in Earth model names to filenames

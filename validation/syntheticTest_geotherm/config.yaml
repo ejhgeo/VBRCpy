@@ -2,7 +2,7 @@
 # Combined config for the geotherm round-trip validation (syntheticTest_geotherm).
 #
 # Run with:
-#   python -m vbrc_V2Tpy.validation.syntheticTest_geotherm.run_example
+#   python -m VBRCpy.validation.syntheticTest_geotherm.run_example
 # ============================================================================
 
 # ── Output ───────────────────────────────────────────────────────────────────

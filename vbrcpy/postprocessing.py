@@ -302,7 +302,7 @@ def load_from_csv(
 ) -> "pd.DataFrame":
     """Load ML estimates from split-file CSV directory or single CSV.
 
-    Thin wrapper around :func:`~bayesian_fitting_py.io.load_ml_estimates`.
+    Thin wrapper around :func:`~vbrcpy.io.load_ml_estimates`.
     """
     from .io import load_ml_estimates
     return load_ml_estimates(csv_path, method=method)

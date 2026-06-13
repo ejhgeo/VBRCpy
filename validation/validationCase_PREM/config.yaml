@@ -7,7 +7,7 @@
 # reasonable profiles given a well-known 1-D reference Earth model.
 #
 # Run with:
-#   python -m vbrc_V2Tpy.validation.validationCase_PREM.run_prem
+#   python -m VBRCpy.validation.validationCase_PREM.run_prem
 # ============================================================================
 
 # ── Output ───────────────────────────────────────────────────────────────────

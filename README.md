@@ -1,4 +1,4 @@
-# vbrc_V2Tpy — Bayesian Seismic Inversion (Python)
+# VBRCpy — Bayesian Seismic Inversion (Python)
 
 Python translation of the MATLAB [VBR Calculator](https://github.com/vbr-calc/vbr)
 bayesian_fitting project for estimating temperature, melt fraction, grain size,
@@ -21,14 +21,15 @@ points on HPC clusters with bounded memory.
 Create a conda environment with all required packages (including plotting):
 
 ```bash
-conda create -n vbrc_v2t -c conda-forge python=3.12 numpy scipy matplotlib pyyaml pandas xarray netcdf4 pygmt
-conda activate vbrc_v2t
+conda create -n vbrcpy -c conda-forge python=3.12 numpy scipy matplotlib pyyaml pandas xarray netcdf4 pygmt
+conda activate vbrcpy
 ```
 
 ### 2. Install
 
 ```bash
-pip install -e ./vbrc_V2Tpy
+cd VBRCpy
+pip install -e .
 ```
 
 > **Important:** The `-e` (editable) flag is **required**, not optional.
@@ -45,27 +46,27 @@ The inversion requires pre-computed VBR sweep data and seismic observations
 ```bash
 fetch-vbr-data          # interactive prompt
 # or
-python -m bayesian_fitting_py.fetch_data -y   # skip prompt
+python -m vbrcpy.fetch_data -y   # skip prompt
 ```
 
-Data is placed in `vbrc_V2Tpy/data/` by default.  Use `--data-dir` to choose
+Data is placed in `VBRCpy/data/` by default.  Use `--data-dir` to choose
 a different location.
 
 ### 4. Run
 
 ```bash
 # Default inversion (Vs + Q, all methods, log-uniform grain-size prior)
-python -m bayesian_fitting_py
+python -m vbrcpy
 
 # Use a YAML configuration file
-python -m bayesian_fitting_py --config config_example_bayesian_fitting.yaml
+python -m vbrcpy --config config_example_bayesian_fitting.yaml
 
 # Parallel processing for large-scale runs (0 = auto-detect all cores)
-python -m bayesian_fitting_py --config my_config.yaml --parallel 4
-python -m bayesian_fitting_py --config my_config.yaml -j 0
+python -m vbrcpy --config my_config.yaml --parallel 4
+python -m vbrcpy --config my_config.yaml -j 0
 
 # List available anelastic methods
-python -m bayesian_fitting_py --list-methods
+python -m vbrcpy --list-methods
 ```
 
 ### 5. Post-Processing
@@ -118,16 +119,15 @@ vbrc-plot-maps --depth 100 200 400 --vars T_mean log10_eta_mean phi_mean gs_mean
 ## Project Layout
 
 ```
-vbrc_V2Tpy/
+VBRCpy/
 ├── pyproject.toml                  # Package metadata & dependencies
-├── PROJECT_STATE.md                # Detailed project state for AI session bootstrap
 ├── data/                           # Fetched data files (git-ignored)
 │   └── reference_models/           # Bundled 1D Earth models & geotherms
 ├── config_example_*.yaml           # Example configuration files
 ├── validation/                     # Validation & testing framework
 │   ├── syntheticTest_geotherm/     # Geotherm-based validation (SC2006 continental)
 │   └── benchmarkTest_vsMatlab/     # Python vs MATLAB VBRc benchmark
-└── bayesian_fitting_py/            # Python package
+└── vbrcpy/            # Python package
     ├── run_bayes.py                # Main inversion driver & CLI
     ├── fitting.py                  # Fitting functions & ML estimation
     ├── parallel.py                 # Depth-batched streaming parallel dispatch
@@ -150,7 +150,7 @@ vbrc_V2Tpy/
 
 ## Documentation
 
-See [bayesian_fitting_py/README.md](bayesian_fitting_py/README.md) for full
+See [vbrcpy/README.md](vbrcpy/README.md) for full
 documentation including:
 
 - Detailed usage and CLI options
@@ -161,18 +161,18 @@ documentation including:
 
 ## Validation
 
-```bash
-cd /Users/ehightow/Research/V2T_Inversion
+From the repository root:
 
+```bash
 # Benchmark: compare Python vs MATLAB VBRc (sweep comparison, LUT plots, inversion)
-python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+python -m VBRCpy.validation.benchmarkTest_vsMatlab
 
 # Synthetic geotherm test (Steinberger & Calderwood 2006 geotherm, configurable grain size)
-python -m vbrc_V2Tpy.validation.syntheticTest_geotherm
-python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --gs-um 800
+python -m VBRCpy.validation.syntheticTest_geotherm
+python -m VBRCpy.validation.syntheticTest_geotherm --gs-um 800
 
 # Regenerate LUT diagnostic plots from existing sweep (no re-computation)
-python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --replot-lut
+python -m VBRCpy.validation.syntheticTest_geotherm --replot-lut
 ```
 
 The synthetic geotherm test uses an independent VBR core computation (not grid
@@ -189,14 +189,15 @@ root (outside the git repository).
 ## Uninstall
 
 ```bash
-pip uninstall bayesian_fitting_py
+pip uninstall vbrcpy
 ```
 
 ## Citation
 
-If you use this code, please cite the VBR calculator and relevant papers
-describing the anelastic methods used.
+If you use this software, please cite it using the metadata in
+[CITATION.cff](CITATION.cff).  Please also cite the VBR calculator and
+relevant papers describing the anelastic methods used.
 
 ## License
 
-Same license as the parent [VBR project](https://github.com/vbr-calc/vbr).
+MIT License. See [LICENSE](LICENSE) for details.

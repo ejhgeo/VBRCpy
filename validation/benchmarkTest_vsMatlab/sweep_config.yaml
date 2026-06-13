@@ -8,14 +8,14 @@
 # It can take 8-10 minutes to generate the sweep. 
 #
 # For the benchmark case, this is run from run_benchmark.py, which calls the inversion module with this config.:
-#   python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+#   python -m VBRCpy.validation.benchmarkTest_vsMatlab
 #
 # If it detects that an identical sweep file already exists, it will skip sweep generation and use the existing file. 
 # To force regeneration of the sweep, delete the existing sweep.npz file or change the output_file path in this config.
 # 
 # Sweep generation can also be run independently of run_benchmark.py with:
-#   python -m vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep \
-#       --config vbrc_V2Tpy/validation/benchmarkTest_vsMatlab/sweep_config.yaml
+#   python -m vbrcpy.vbr.generate_sweep \
+#       --config VBRCpy/validation/benchmarkTest_vsMatlab/sweep_config.yaml
 # ============================================================================
 
 sweep_generation:

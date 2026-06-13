@@ -5,7 +5,7 @@
 # to produce inversion results comparable to the MATLAB VBRc output.
 #
 # For the benchmark case, this is run from run_benchmark.py, which calls the inversion module with this config.:
-#   python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+#   python -m VBRCpy.validation.benchmarkTest_vsMatlab
 # To run benchmark with different grainsize priors: 
 #   set gs_prior_type to "log_uniform" or "log_normal" (with gs_prior_mean_mm and gs_prior_std)  
 # To run the benchmark with either Vs or Q only:
@@ -16,8 +16,8 @@
 #   DO NOT OUTPUT TO GITHUB REPO DIRECTORY; keep your GitHub repo clone clean
 #
 # Inversion can also be run independently of run_benchmark.py with:
-#   python -m vbrc_V2Tpy.bayesian_fitting_py \
-#       --config vbrc_V2Tpy/validation/benchmarkTest_vsMatlab/inversion_config.yaml
+#   python -m vbrcpy \
+#       --config VBRCpy/validation/benchmarkTest_vsMatlab/inversion_config.yaml
 # ============================================================================
 
 location_mode: manual
@@ -52,9 +52,9 @@ location_colors:
   - 0
 
 # Data files (relative to workspace root)
-vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
-q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
-lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
+vs_file: ./data/vel_models/Shen_Ritzwoller_2016.mat
+q_file: ./data/Q_models/Dalton_Ekstrom_2008.mat
+lab_file: ./data/LAB_models/HopperFischer2018.mat
 
 sweep_file: validation_tests/benchmarkTest_vsMatlab_newDataLoader/sweep.npz
 

@@ -17,8 +17,8 @@ from dataclasses import dataclass, field, asdict, fields as _dc_fields
 import pickle
 
 # Resolve the bundled data directory: <package_root>/../data/
-_PACKAGE_DIR = Path(__file__).resolve().parent  # bayesian_fitting_py/
-_PACKAGE_DATA_DIR = _PACKAGE_DIR.parent / 'data'  # vbrc_V2Tpy/data/
+_PACKAGE_DIR = Path(__file__).resolve().parent  # vbrcpy/
+_PACKAGE_DATA_DIR = _PACKAGE_DIR.parent / 'data'  # VBRCpy/data/
 
 # Guard: the data/ and data/reference_models/ directories live outside the
 # Python package tree, so they are only accessible when the package is
@@ -27,7 +27,7 @@ if not _PACKAGE_DATA_DIR.is_dir():
     raise RuntimeError(
         f"Data directory not found: {_PACKAGE_DATA_DIR}\n"
         "This package must be installed in editable mode:\n"
-        "    pip install -e ./vbrc_V2Tpy\n"
+        "    pip install -e ./VBRCpy\n"
         "A regular 'pip install' will not work because the data/ "
         "directory lives outside the Python package tree."
     )
@@ -1442,34 +1442,34 @@ def main():
         epilog="""
 Examples:
   # Run with default settings (all anelastic methods, both Vs and Q)
-  python -m bayesian_fitting_py
+  python -m vbrcpy
 
   # Use only xfit_premelt method
-  python -m bayesian_fitting_py --anelastic-methods xfit_premelt
+  python -m vbrcpy --anelastic-methods xfit_premelt
 
   # Use multiple specific methods
-  python -m bayesian_fitting_py --anelastic-methods xfit_premelt,eburgers_psp
+  python -m vbrcpy --anelastic-methods xfit_premelt,eburgers_psp
 
   # Use all available methods
-  python -m bayesian_fitting_py --anelastic-methods all
+  python -m vbrcpy --anelastic-methods all
 
   # Use a parameter file
-  python -m bayesian_fitting_py --config my_config.yaml
+  python -m vbrcpy --config my_config.yaml
 
   # Generate a template parameter file
-  python -m bayesian_fitting_py --generate-config my_config.yaml
+  python -m vbrcpy --generate-config my_config.yaml
 
   # Load locations from a file (seismic data still from .mat files)
-  python -m bayesian_fitting_py --location-mode locations_file --location-file locations.txt
+  python -m vbrcpy --location-mode locations_file --location-file locations.txt
 
   # Load seismic model from a file (locations + Vs/Q, format auto-detected)
-  python -m bayesian_fitting_py --location-mode model --vs-file model.csv
+  python -m vbrcpy --location-mode model --vs-file model.csv
 
   # Separate Vs and Q sources (same or different file)
-  python -m bayesian_fitting_py --location-mode model --vs-file model.nc --q-file q_model.nc
+  python -m vbrcpy --location-mode model --vs-file model.nc --q-file q_model.nc
 
   # Use PREM Q values with a 3D Vs model
-  python -m bayesian_fitting_py --location-mode model --vs-file model.mat --q-file prem
+  python -m vbrcpy --location-mode model --vs-file model.mat --q-file prem
         """
     )
     parser.add_argument(

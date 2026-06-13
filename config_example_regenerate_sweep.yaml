@@ -5,7 +5,7 @@
 # for Bayesian inversion of seismic observations.
 #
 # Run with:
-#   python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml
+#   python -m vbrcpy.vbr.generate_sweep --config sweep_config.yaml
 # ============================================================================
 
 sweep_generation:

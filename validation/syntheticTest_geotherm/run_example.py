@@ -15,7 +15,7 @@ Usage
 -----
 From the repository root::
 
-    python -m vbrc_V2Tpy.validation.syntheticTest_geotherm.run_example
+    python -m VBRCpy.validation.syntheticTest_geotherm.run_example
 """
 
 import argparse
@@ -46,7 +46,7 @@ SYNTH_CSV        = os.path.join(OUTPUT_DIR, 'synthetic_observations.csv')
 INVERSION_DIR    = os.path.join(OUTPUT_DIR, 'inversion_results')
 
 sys.path.insert(0, REPO_ROOT)
-from vbrc_V2Tpy.bayesian_fitting_py.orchestration import (
+from vbrcpy.orchestration import (
     run_sweep_step, replot_lut, run_inversion_step,
 )
 
@@ -98,11 +98,11 @@ def _generate_synthetic_csv(sweep_file, csv_out, geotherm_z, geotherm_T_vals,
     true T, phi, and gs values for each depth.
     """
     sys.path.insert(0, REPO_ROOT)
-    from vbrc_V2Tpy.bayesian_fitting_py.fitting import load_sweep_data
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.core import VBR, StateVariables
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.thermal import calculate_solidus_K
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.params import C2K
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import load_sweep_params_from_yaml
+    from vbrcpy.fitting import load_sweep_data
+    from vbrcpy.vbr.core import VBR, StateVariables
+    from vbrcpy.vbr.thermal import calculate_solidus_K
+    from vbrcpy.vbr.params import C2K
+    from vbrcpy.vbr.generate_sweep import load_sweep_params_from_yaml
 
     print(f"Loading sweep from {sweep_file} ...")
     sweep = load_sweep_data(sweep_file)
@@ -204,7 +204,7 @@ def _make_comparison_plots(z_km, T_true, phi_true, gs_true, Vs_syn, Q_syn,
     """Plot recovered vs true profiles."""
     import pandas as pd
     sys.path.insert(0, REPO_ROOT)
-    from vbrc_V2Tpy.bayesian_fitting_py.fitting import load_sweep_data
+    from vbrcpy.fitting import load_sweep_data
 
     df = pd.read_csv(ml_csv)
     if 'anelastic_method' in df.columns:
@@ -235,9 +235,9 @@ def _make_comparison_plots(z_km, T_true, phi_true, gs_true, Vs_syn, Q_syn,
     sweep_gs = sweep['gs']
 
     # Compute solidus profile for the temperature panel
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.thermal import calculate_solidus_K
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.params import C2K
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import load_sweep_params_from_yaml
+    from vbrcpy.vbr.thermal import calculate_solidus_K
+    from vbrcpy.vbr.params import C2K
+    from vbrcpy.vbr.generate_sweep import load_sweep_params_from_yaml
     sweep_params = load_sweep_params_from_yaml(CONFIG_FILE)
     sweep_params.output_file = SWEEP_FILE
     sweep_z_km = sweep['z'] / 1e3

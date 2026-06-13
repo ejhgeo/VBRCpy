@@ -19,9 +19,9 @@ McCarthy, Takei, Hiraga, 2011, JGR
 Usage
 -----
 For sweep generation, import directly from the submodule:
-    from bayesian_fitting_py.vbr.generate_sweep import generate_parameter_sweep, save_sweep, load_sweep
+    from vbrcpy.vbr.generate_sweep import generate_parameter_sweep, save_sweep, load_sweep
 Or use the CLI:
-    python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml
+    python -m vbrcpy.vbr.generate_sweep --config sweep_config.yaml
 """
 
 from .core import VBR
@@ -34,8 +34,8 @@ from .params import (
 from .thermal import solidus
 
 # Note: generate_parameter_sweep, save_sweep, load_sweep are not imported here to avoid
-# warnings when running as `python -m bayesian_fitting_py.vbr.generate_sweep`.
-# Import them directly: from bayesian_fitting_py.vbr.generate_sweep import generate_parameter_sweep
+# warnings when running as `python -m vbrcpy.vbr.generate_sweep`.
+# Import them directly: from vbrcpy.vbr.generate_sweep import generate_parameter_sweep
 
 __all__ = [
     'VBR',

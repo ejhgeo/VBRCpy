@@ -3,11 +3,26 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bayesian_fitting_py"
+name = "vbrcpy"
 version = "1.0.0"
 description = "Bayesian inversion of seismic Vs and Q using the VBR calculator"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Erin Hightower"},
+]
+keywords = ["seismology", "bayesian-inference", "rheology", "mantle", "anelasticity", "VBR"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
     "numpy>=1.20.0",
     "scipy>=1.7.0",
@@ -19,13 +34,28 @@ dependencies = [
     "pygmt>=0.9.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/ejhgeo/VBRCpy"
+Issues = "https://github.com/ejhgeo/VBRCpy/issues"
+
 [project.scripts]
-fetch-vbr-data = "bayesian_fitting_py.fetch_data:_cli_main"
-vbrc-to-netcdf = "bayesian_fitting_py.postprocessing:_cli_to_netcdf"
-vbrc-plot-maps = "bayesian_fitting_py.postprocessing:_cli_plot_maps"
+fetch-vbr-data = "vbrcpy.fetch_data:_cli_main"
+vbrc-to-netcdf = "vbrcpy.postprocessing:_cli_to_netcdf"
+vbrc-plot-maps = "vbrcpy.postprocessing:_cli_plot_maps"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
 
 [tool.setuptools.packages.find]
-include = ["bayesian_fitting_py*"]
+include = ["vbrcpy*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.txt", "*.md", "*.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "fast: unit tests completing in under 1 second each",
+    "integration: pipeline tests completing in under 60 seconds each",
+    "parallel: tests requiring multiprocessing",
+]

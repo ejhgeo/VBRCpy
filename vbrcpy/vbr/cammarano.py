@@ -19,7 +19,7 @@ Usage
 -----
 From the sweep generator or VBR core:
 
-    >>> from bayesian_fitting_py.vbr.cammarano import cammarano_elastic
+    >>> from vbrcpy.vbr.cammarano import cammarano_elastic
     >>> G, K, rho, Vs, Vp = cammarano_elastic(T_K, P_GPa)
 
 The default composition model is pyrolite, which automatically selects

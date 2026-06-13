@@ -2,7 +2,7 @@
 # Combined config for the MATLAB benchmark validation (benchmarkTest_vsMatlab).
 #
 # Run with:
-#   python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+#   python -m VBRCpy.validation.benchmarkTest_vsMatlab
 # ============================================================================
 
 # ── Output ───────────────────────────────────────────────────────────────────
@@ -102,9 +102,9 @@ location_colors:
   - 0
 
 # Data files (relative to workspace root)
-vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
-q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
-lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
+vs_file: ./data/vel_models/Shen_Ritzwoller_2016.mat
+q_file: ./data/Q_models/Dalton_Ekstrom_2008.mat
+lab_file: ./data/LAB_models/HopperFischer2018.mat
 
 anelastic_methods:
   - eburgers_psp

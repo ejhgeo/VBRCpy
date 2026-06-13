@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "VBRCpy"
+authors:
+  - family-names: "Hightower"
+    given-names: "Erin"
+version: "1.0.0"
+date-released: "2026-06-12"
+license: MIT
+repository-code: "https://github.com/ejhgeo/VBRCpy"
+keywords:
+  - seismology
+  - bayesian inference
+  - rheology
+  - mantle viscosity
+  - anelasticity
+  - VBR calculator

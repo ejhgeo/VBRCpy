@@ -34,23 +34,24 @@ conda activate vbrc_v2t
 
 ### Install the package
 
-From the parent directory of `vbrc_V2Tpy/`, run:
+From the repository root:
 
 ```bash
-pip install -e ./vbrc_V2Tpy
+cd VBRCpy
+pip install -e .
 ```
 
 This installs the package in **editable mode** (`-e`), meaning:
-- `python -m bayesian_fitting_py` works from any directory on your system
-- Code changes in `vbrc_V2Tpy/bayesian_fitting_py/` take effect immediately (no reinstall needed)
+- `python -m vbrcpy` works from any directory on your system
+- Code changes in `VBRCpy/vbrcpy/` take effect immediately (no reinstall needed)
 
 ## Usage
 
 ### Basic Usage
 
 ```python
-from bayesian_fitting_py import run_bayesian_inversion
-from bayesian_fitting_py.run_bayes import InversionConfig
+from vbrcpy import run_bayesian_inversion
+from vbrcpy.run_bayes import InversionConfig
 
 # Use default configuration
 results = run_bayesian_inversion()
@@ -67,31 +68,30 @@ results = run_bayesian_inversion(config)
 
 ### Command Line
 
-Run from the `V2T_Inversion` directory (parent of `bayesian_fitting_py`):
+After installing the package, run from anywhere:
 
 ```bash
-cd /Users/ehightow/Research/V2T_Inversion
 
 # Use both Vs and Q with all anelastic methods (default)
-python -m bayesian_fitting_py --gs-prior log_uniform --output-dir plots/
+python -m vbrcpy --gs-prior log_uniform --output-dir plots/
 
 # Use only Vs data
-python -m bayesian_fitting_py --obs-types Vs --output-dir plots/
+python -m vbrcpy --obs-types Vs --output-dir plots/
 
 # Use only Q data
-python -m bayesian_fitting_py --obs-types Q --output-dir plots/
+python -m vbrcpy --obs-types Q --output-dir plots/
 
 # Use a single anelastic method
-python -m bayesian_fitting_py --anelastic-methods xfit_premelt
+python -m vbrcpy --anelastic-methods xfit_premelt
 
 # Use multiple specific anelastic methods
-python -m bayesian_fitting_py --anelastic-methods xfit_premelt,eburgers_psp
+python -m vbrcpy --anelastic-methods xfit_premelt,eburgers_psp
 
 # Use all available anelastic methods
-python -m bayesian_fitting_py --anelastic-methods all
+python -m vbrcpy --anelastic-methods all
 
 # List available anelastic methods
-python -m bayesian_fitting_py --list-methods
+python -m vbrcpy --list-methods
 ```
 
 ## Location Modes
@@ -123,7 +123,7 @@ Load locations from a CSV or text file (seismic data still loaded from
 `vs_file`/`q_file`):
 
 ```bash
-python -m bayesian_fitting_py --location-mode locations_file --location-file locations.csv
+python -m vbrcpy --location-mode locations_file --location-file locations.csv
 ```
 
 File format (CSV or whitespace-separated):
@@ -142,16 +142,16 @@ The file format is **auto-detected** from the extension (.csv, .mat, .nc):
 
 ```bash
 # CSV model
-python -m bayesian_fitting_py --location-mode model --vs-file model.csv
+python -m vbrcpy --location-mode model --vs-file model.csv
 
 # MAT model
-python -m bayesian_fitting_py --location-mode model --vs-file model.mat
+python -m vbrcpy --location-mode model --vs-file model.mat
 
 # NetCDF model (requires xarray)
-python -m bayesian_fitting_py --location-mode model --vs-file model.nc
+python -m vbrcpy --location-mode model --vs-file model.nc
 
 # Separate Vs and Q files
-python -m bayesian_fitting_py --location-mode model --vs-file vs_model.csv --q-file q_model.csv
+python -m vbrcpy --location-mode model --vs-file vs_model.csv --q-file q_model.csv
 ```
 
 CSV format:
@@ -172,13 +172,13 @@ mode internally.
 
 ```bash
 # Filter to specific depth range
-python -m bayesian_fitting_py --location-mode model --vs-file model.csv --model-z-range 100,200
+python -m vbrcpy --location-mode model --vs-file model.csv --model-z-range 100,200
 
 # Subsample to reduce computation
-python -m bayesian_fitting_py --location-mode model --vs-file model.mat --model-subsample 2
+python -m vbrcpy --location-mode model --vs-file model.mat --model-subsample 2
 
 # Set default errors if not in file
-python -m bayesian_fitting_py --location-mode model --vs-file model.csv --default-vs-error 0.1 --default-q-error 15
+python -m vbrcpy --location-mode model --vs-file model.csv --default-vs-error 0.1 --default-q-error 15
 ```
 
 ### Large-Scale Runs
@@ -191,7 +191,7 @@ When processing >20 locations:
 
 ```bash
 # Large model with CSV output
-python -m bayesian_fitting_py --location-mode csv_model --seismic-model-file model.csv --save-csv --csv-file my_results.csv
+python -m vbrcpy --location-mode csv_model --seismic-model-file model.csv --save-csv --csv-file my_results.csv
 ```
 
 ### Parallel Processing
@@ -201,10 +201,10 @@ process locations in parallel using Python multiprocessing:
 
 ```bash
 # Use 4 worker processes
-python -m bayesian_fitting_py --config my_config.yaml --parallel 4
+python -m vbrcpy --config my_config.yaml --parallel 4
 
 # Auto-detect all available CPU cores
-python -m bayesian_fitting_py --config my_config.yaml -j 0
+python -m vbrcpy --config my_config.yaml -j 0
 
 # Or set in the YAML config file:
 # parallel_workers: 4
@@ -230,13 +230,13 @@ Instead of specifying all options on the command line, you can use a configurati
 
 ```bash
 # Generate a template configuration file
-python -m bayesian_fitting_py --generate-config my_config.yaml
+python -m vbrcpy --generate-config my_config.yaml
 
 # Run with a configuration file
-python -m bayesian_fitting_py --config my_config.yaml
+python -m vbrcpy --config my_config.yaml
 
 # Override specific settings from the config file
-python -m bayesian_fitting_py --config my_config.yaml --anelastic-methods xfit_premelt
+python -m vbrcpy --config my_config.yaml --anelastic-methods xfit_premelt
 ```
 
 Example YAML configuration file (`my_config.yaml`):
@@ -351,10 +351,10 @@ fetch-vbr-data
 fetch-vbr-data -y
 
 # Or via python -m
-python -m bayesian_fitting_py.fetch_data
+python -m vbrcpy.fetch_data
 ```
 
-By default, data is placed in `vbrc_V2Tpy/data/` (alongside the package).
+By default, data is placed in `VBRCpy/data/` (alongside the package).
 To choose a different location:
 
 ```bash
@@ -375,7 +375,7 @@ These can be fetched automatically from the vbrPublicData repository.
 ## Module Structure
 
 ```
-bayesian_fitting_py/
+vbrcpy/
 ├── __init__.py          # Package initialization
 ├── __main__.py          # CLI entry point
 ├── run_bayes.py         # Main inversion script, CLI, InversionConfig
@@ -416,8 +416,8 @@ and saved for repeated use.
 #### Using Python API
 
 ```python
-from bayesian_fitting_py.vbr import VBR, generate_parameter_sweep
-from bayesian_fitting_py.vbr.generate_sweep import SweepParams, save_sweep
+from vbrcpy.vbr import VBR, generate_parameter_sweep
+from vbrcpy.vbr.generate_sweep import SweepParams, save_sweep
 import numpy as np
 
 # Define sweep parameters
@@ -441,13 +441,13 @@ save_sweep(sweep, 'my_sweep.mat')
 
 ```bash
 # Generate sweep from YAML config file
-python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml
+python -m vbrcpy.vbr.generate_sweep --config sweep_config.yaml
 
 # Override output file
-python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml --output my_sweep.mat
+python -m vbrcpy.vbr.generate_sweep --config sweep_config.yaml --output my_sweep.mat
 
 # Show progress
-python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml --verbose
+python -m vbrcpy.vbr.generate_sweep --config sweep_config.yaml --verbose
 ```
 
 #### Example Configuration File (sweep_config.yaml)
@@ -520,7 +520,7 @@ The package supports multiple file formats for parameter sweeps:
 
 **Saving in different formats:**
 ```python
-from bayesian_fitting_py.vbr.generate_sweep import save_sweep, load_sweep
+from vbrcpy.vbr.generate_sweep import save_sweep, load_sweep
 
 # Save to different formats (format determined by extension)
 save_sweep(sweep, 'sweep.mat')   # MATLAB format
@@ -539,8 +539,8 @@ Use `.mat` if you need compatibility with MATLAB or existing code.
 You can also use the VBR calculator for single-point calculations:
 
 ```python
-from bayesian_fitting_py.vbr import VBR
-from bayesian_fitting_py.vbr.core import StateVariables
+from vbrcpy.vbr import VBR
+from vbrcpy.vbr.core import StateVariables
 import numpy as np
 
 # Create state variables
@@ -597,7 +597,7 @@ Configurable via `solidus_method` in the sweep config:
 - `yk2001`: Yamazaki & Karato (2001) — uses depth-dependent pressure from earth model
 
 ```python
-from bayesian_fitting_py.vbr.thermal import solidus, calculate_solidus_K
+from vbrcpy.vbr.thermal import solidus, calculate_solidus_K
 
 # Calculate solidus at a given pressure
 T_sol = solidus(P_GPa=2.0, method='katz')  # Katz et al. 2003

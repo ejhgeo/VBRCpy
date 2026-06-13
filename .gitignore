@@ -16,3 +16,17 @@ data/tmp/
 
 # Agent/AI session files
 agent_history_*.json
+
+# AI development documentation (user-specific)
+CLAUDE.md
+CLAUDE.local.md
+PROJECT_STATE.md
+
+# IDE
+.vscode/
+.idea/
+
+# Test cache and coverage
+.pytest_cache/
+.coverage
+htmlcov/

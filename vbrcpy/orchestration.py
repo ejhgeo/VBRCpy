@@ -235,7 +235,7 @@ def run_inversion_step(
     python = sys.executable
     cmd = [
         python, '-m',
-        'vbrc_V2Tpy.bayesian_fitting_py',
+        'vbrcpy',
         '--config', config_path,
         '--sweep-file', sweep_file,
         '--output-dir', output_dir,

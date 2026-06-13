@@ -2,8 +2,8 @@
 # Bayesian inversion config for the geotherm round-trip validation.
 #
 # Run with:
-#   python -m vbrc_V2Tpy.bayesian_fitting_py \
-#       --config vbrc_V2Tpy/validation/syntheticTest_geotherm/inversion_config.yaml
+#   python -m vbrcpy \
+#       --config VBRCpy/validation/syntheticTest_geotherm/inversion_config.yaml
 # ============================================================================
 
 # Use csv_model mode — the synthetic Vs file acts as the "observed" data

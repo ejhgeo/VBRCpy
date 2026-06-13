@@ -2,8 +2,8 @@
 # Sweep generation config for the geotherm round-trip validation.
 #
 # Run with:
-#   python -m vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep \
-#       --config vbrc_V2Tpy/validation/syntheticTest_geotherm/sweep_config.yaml
+#   python -m vbrcpy.vbr.generate_sweep \
+#       --config VBRCpy/validation/syntheticTest_geotherm/sweep_config.yaml
 # ============================================================================
 
 sweep_generation:

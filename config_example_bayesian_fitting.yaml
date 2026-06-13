@@ -69,11 +69,11 @@ location_colors:
 #   vs_file: ./my_model.mat            # MATLAB .mat file
 #   q_file: prem                       # Use PREM Qmu profile
 #   q_file: stw105                     # Use STW105 Qmu profile
-vs_file: ./vbrc_V2Tpy/data/vel_models/Shen_Ritzwoller_2016.mat
-q_file: ./vbrc_V2Tpy/data/Q_models/Dalton_Ekstrom_2008.mat
-lab_file: ./vbrc_V2Tpy/data/LAB_models/HopperFischer2018.mat
-# sweep_file: ./vbrc_V2Tpy/data/plate_VBR/sweep_log_gs.mat  # original sweep file with VBRc distribution
-sweep_file: ./vbrc_V2Tpy/data/plate_VBR/sweep_log_gs.mat
+vs_file: ./data/vel_models/Shen_Ritzwoller_2016.mat
+q_file: ./data/Q_models/Dalton_Ekstrom_2008.mat
+lab_file: ./data/LAB_models/HopperFischer2018.mat
+# sweep_file: ./data/plate_VBR/sweep_log_gs.mat  # original sweep file with VBRc distribution
+sweep_file: ./data/plate_VBR/sweep_log_gs.mat
 # sweep_file: ./test.mat
 
 # ----------------------------------------------------------------------------
@@ -127,7 +127,7 @@ obs_types: VsQ
 # ----------------------------------------------------------------------------
 # OUTPUT SETTINGS
 # ----------------------------------------------------------------------------
-output_dir: plots_debug_new/
+output_dir: output/
 save_plots: true
 # force_plots: true      # force posterior plots even for large-scale runs
 # plot_every_n: 5        # with force_plots, plot every N-th location (1 = all)

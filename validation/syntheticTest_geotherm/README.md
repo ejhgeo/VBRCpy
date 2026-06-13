@@ -65,13 +65,13 @@ or
 conda activate myENV
 
 # Run with default true grain size (1 mm = 1000 µm)
-python -m vbrc_V2Tpy.validation.syntheticTest_geotherm
+python -m VBRCpy.validation.syntheticTest_geotherm
 
 # Specify a different true grain size (e.g. 800 µm) (and update your prior in the config file if you want)
-python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --gs-um 800
+python -m VBRCpy.validation.syntheticTest_geotherm --gs-um 800
 
 # Regenerate LUT diagnostic plots from existing sweep (no recomputation)
-python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --replot-lut
+python -m VBRCpy.validation.syntheticTest_geotherm --replot-lut
 ```
 
 ### Pipeline Steps
@@ -84,7 +84,7 @@ python -m vbrc_V2Tpy.validation.syntheticTest_geotherm --replot-lut
    core (elastic → viscous → anelastic) at the exact true T, φ, gs
    for each depth.  Writes a CSV with columns `lon, lat, depth, vs, q`.
 3. **Run Bayesian inversion** — calls the standard
-   `bayesian_fitting_py` CLI on the synthetic CSV, producing posterior
+   `vbrcpy` CLI on the synthetic CSV, producing posterior
    distributions and ML estimates at each depth.
 4. **Comparison plots** — generates a 2×3 figure (T, Vs, Q, φ, gs, η)
    comparing MAP and marginal-mean estimates against the known truth,

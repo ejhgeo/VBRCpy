@@ -20,7 +20,7 @@ Usage
 -----
 From the repository root::
 
-    python -m vbrc_V2Tpy.validation.validationCase_PREM.run_prem
+    python -m VBRCpy.validation.validationCase_PREM.run_prem
 """
 
 import argparse
@@ -49,7 +49,7 @@ SWEEP_FINGERPRINT = os.path.join(OUTPUT_DIR, 'sweep_fingerprint.json')
 INVERSION_DIR     = os.path.join(OUTPUT_DIR, 'inversion_results')
 
 sys.path.insert(0, REPO_ROOT)
-from vbrc_V2Tpy.bayesian_fitting_py.orchestration import (
+from vbrcpy.orchestration import (
     run_sweep_step, replot_lut, run_inversion_step,
 )
 
@@ -65,10 +65,10 @@ def _make_profile_plots(depth_km, Vs_obs, Q_obs, ml_csv, method='xfit_premelt'):
     ref_model = _cfg.get('reference_model', 'prem').upper()
 
     sys.path.insert(0, REPO_ROOT)
-    from vbrc_V2Tpy.bayesian_fitting_py.fitting import load_sweep_data
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.thermal import calculate_solidus_K
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.params import C2K
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.generate_sweep import load_sweep_params_from_yaml
+    from vbrcpy.fitting import load_sweep_data
+    from vbrcpy.vbr.thermal import calculate_solidus_K
+    from vbrcpy.vbr.params import C2K
+    from vbrcpy.vbr.generate_sweep import load_sweep_params_from_yaml
 
     df = pd.read_csv(ml_csv)
     if 'anelastic_method' in df.columns:
@@ -265,7 +265,7 @@ def main():
     print(f"STEP 2: Load {ref_model} Vs/Q reference profiles")
     print("=" * 70, flush=True)
     sys.path.insert(0, REPO_ROOT)
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.thermal import _load_earth_model
+    from vbrcpy.vbr.thermal import _load_earth_model
     depth_m, _density, vs_m_s, qmu = _load_earth_model(
         ref_model, fields=['Vs', 'Qmu'],
     )

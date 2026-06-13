@@ -11,7 +11,7 @@ Usage
 -----
 From the workspace root::
 
-    python -m vbrc_V2Tpy.validation.benchmarkTest_vsMatlab
+    python -m VBRCpy.validation.benchmarkTest_vsMatlab
 
 Steps
 -----
@@ -54,7 +54,7 @@ METHODS = ['andrade_psp', 'eburgers_psp', 'xfit_mxw', 'xfit_premelt']
 LUT_P_GPA_FIXED = [2.0]
 
 sys.path.insert(0, REPO_ROOT)
-from vbrc_V2Tpy.bayesian_fitting_py.orchestration import (
+from vbrcpy.orchestration import (
     run_sweep_step, run_inversion_step,
 )
 
@@ -70,7 +70,7 @@ def _compare_sweeps_numerically(python_sweep_file, matlab_sweep_file):
     """
     # --- Load Python sweep (.npz) via the project loader ---
     sys.path.insert(0, REPO_ROOT)
-    from vbrc_V2Tpy.bayesian_fitting_py.fitting import load_sweep_data
+    from vbrcpy.fitting import load_sweep_data
     sweep_py = load_sweep_data(python_sweep_file)
 
     # --- Load MATLAB sweep (raw struct, same as compare_sweeps.py) ---
@@ -235,7 +235,7 @@ def _plot_lut_comparisons(python_sweep_file, matlab_sweep_file,
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    from vbrc_V2Tpy.bayesian_fitting_py.vbr.plot_lut import (
+    from vbrcpy.vbr.plot_lut import (
         _load_sweep_file,
         compare_lut_slices_T_gs,
         compare_lut_slices_gs_phi,

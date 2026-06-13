@@ -1020,13 +1020,13 @@ def main():
         epilog="""
 Examples:
   # Generate sweep with default parameters
-  python -m bayesian_fitting_py.vbr.generate_sweep
+  python -m vbrcpy.vbr.generate_sweep
 
   # Generate sweep from config file
-  python -m bayesian_fitting_py.vbr.generate_sweep --config sweep_config.yaml
+  python -m vbrcpy.vbr.generate_sweep --config sweep_config.yaml
 
   # Generate sweep with custom parameters
-  python -m bayesian_fitting_py.vbr.generate_sweep --t-min 1200 --t-max 1500 --z-min 75 --z-max 150
+  python -m vbrcpy.vbr.generate_sweep --t-min 1200 --t-max 1500 --z-min 75 --z-max 150
         """
     )
     
