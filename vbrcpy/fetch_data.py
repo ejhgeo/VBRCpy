@@ -140,7 +140,12 @@ def fetch_data(data_dir_parent: Optional[str] = None) -> None:
             if success:
                 try:
                     with zipfile.ZipFile(tmp_file, 'r') as zip_ref:
-                        zip_ref.extractall(os.path.join(data_dir, f['dir']))
+                        extract_dir = os.path.realpath(os.path.join(data_dir, f['dir']))
+                        for member in zip_ref.namelist():
+                            member_path = os.path.realpath(os.path.join(extract_dir, member))
+                            if not member_path.startswith(extract_dir + os.sep) and member_path != extract_dir:
+                                raise ValueError(f"Zip contains unsafe path: {member}")
+                        zip_ref.extractall(extract_dir)
                     os.remove(tmp_file)
                     print(f"    Extracted {f['fname']}")
                 except Exception as e:
