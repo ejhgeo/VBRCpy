@@ -473,7 +473,6 @@ def save_sweep(sweep: Dict[str, Any], filename: str, verbose: bool = True) -> No
     Supported formats:
     - .mat: MATLAB-compatible format (works with existing load_sweep_data)
     - .npz: NumPy compressed archive (recommended for Python-only workflows)
-    - .pkl/.pickle: Python pickle format
     
     Parameters
     ----------
@@ -493,8 +492,6 @@ def save_sweep(sweep: Dict[str, Any], filename: str, verbose: bool = True) -> No
         _save_sweep_mat(sweep, filename, verbose)
     elif ext == '.npz':
         _save_sweep_npz(sweep, filename, verbose)
-    elif ext in ['.pkl', '.pickle']:
-        _save_sweep_pickle(sweep, filename, verbose)
     else:
         # Default to .mat for backward compatibility
         if verbose:
@@ -600,24 +597,11 @@ def _save_sweep_npz(sweep: Dict[str, Any], filename: str, verbose: bool = True) 
         print(f"File size: {file_size:.1f} MB")
 
 
-def _save_sweep_pickle(sweep: Dict[str, Any], filename: str, verbose: bool = True) -> None:
-    """Save sweep to pickle file."""
-    import pickle
-    
-    with open(filename, 'wb') as f:
-        pickle.dump(sweep, f, protocol=pickle.HIGHEST_PROTOCOL)
-    
-    if verbose:
-        print(f"Saved sweep to {filename} (pickle format)")
-        file_size = os.path.getsize(filename) / (1024 * 1024)
-        print(f"File size: {file_size:.1f} MB")
-
-
 def load_sweep(filename: str) -> Dict[str, Any]:
     """
     Load a parameter sweep from file.
     
-    Supports .mat, .npz, and .pkl/.pickle formats.
+    Supports .mat and .npz formats.
     
     Parameters
     ----------
@@ -641,9 +625,13 @@ def load_sweep(filename: str) -> Dict[str, Any]:
     elif ext == '.npz':
         return _load_sweep_npz(filename)
     elif ext in ['.pkl', '.pickle']:
-        return _load_sweep_pickle(filename)
+        raise ValueError(
+            f"Pickle format is no longer supported due to security concerns "
+            f"(arbitrary code execution risk). Please regenerate your sweep "
+            f"in .npz format using: python -m vbrcpy.vbr.generate_sweep --output sweep.npz"
+        )
     else:
-        raise ValueError(f"Unknown file extension: {ext}. Supported: .mat, .npz, .pkl")
+        raise ValueError(f"Unknown file extension: {ext}. Supported: .mat, .npz")
 
 
 def _load_sweep_mat(filename: str) -> Dict[str, Any]:
@@ -770,14 +758,6 @@ def _load_sweep_npz(filename: str) -> Dict[str, Any]:
     
     sweep['Box'] = box
     return sweep
-
-
-def _load_sweep_pickle(filename: str) -> Dict[str, Any]:
-    """Load sweep from pickle file."""
-    import pickle
-    
-    with open(filename, 'rb') as f:
-        return pickle.load(f)
 
 
 def load_sweep_params_from_yaml(config_file: str) -> SweepParams:

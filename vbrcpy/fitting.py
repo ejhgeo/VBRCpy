@@ -34,7 +34,6 @@ def load_sweep_data(sweep_file: str) -> Dict[str, Any]:
     Supports multiple formats:
     - .mat: MATLAB format (original and Python-generated)
     - .npz: NumPy compressed archive
-    - .pkl/.pickle: Python pickle format
 
     Parameters
     ----------
@@ -49,7 +48,6 @@ def load_sweep_data(sweep_file: str) -> Dict[str, Any]:
     ext = os.path.splitext(sweep_file)[1].lower()
     
     if ext in ['.npz', '.pkl', '.pickle']:
-        # Use the new Python-native loader
         from .vbr.generate_sweep import load_sweep
         return load_sweep(sweep_file)
     elif ext == '.mat':

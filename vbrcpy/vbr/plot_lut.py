@@ -1109,7 +1109,7 @@ def compare_lut_slices_T_phi(
 
 def _load_sweep_file(filepath: str) -> Dict[str, Any]:
     """
-    Load a sweep file in any supported format (.mat, .npz, .pkl/.pickle).
+    Load a sweep file in any supported format (.mat, .npz).
 
     For .mat files, tries the Python-native loader first (returns a dict),
     falling back to raw loadmat (returns a MATLAB struct object).
@@ -1124,7 +1124,7 @@ def _load_sweep_file(filepath: str) -> Dict[str, Any]:
 
     if ext in ('.npz', '.pkl', '.pickle'):
         from .generate_sweep import load_sweep
-        return load_sweep(filepath)
+        return load_sweep(filepath)  # .pkl raises a clear deprecation error
 
     # .mat — try the Python-native loader first (gives a dict)
     try:
@@ -1141,9 +1141,9 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='Visualize VBR lookup tables (.mat, .npz, .pkl)')
+        description='Visualize VBR lookup tables (.mat, .npz)')
     parser.add_argument('sweep_file',
-                        help='Path to sweep file (.mat, .npz, or .pkl)')
+                        help='Path to sweep file (.mat or .npz)')
     parser.add_argument('--method', default='andrade_psp',
                         help='Anelastic method (default: andrade_psp)')
     parser.add_argument('--P', type=float, default=2.0,

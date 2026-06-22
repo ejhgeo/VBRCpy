@@ -14,7 +14,6 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Union
 from dataclasses import dataclass, field, asdict, fields as _dc_fields
-import pickle
 
 # Resolve the bundled data directory: <package_root>/../data/
 _PACKAGE_DIR = Path(__file__).resolve().parent  # vbrcpy/
@@ -1262,12 +1261,6 @@ def run_bayesian_inversion(
         written = write_split_ml_csv(ml_records, est_parent)
         est_dir = os.path.join(est_parent, 'ml_estimates')
         print(f"\nML estimates saved to {est_dir}/ ({len(written)} files)")
-    
-    # Save results to pickle
-    save_path = os.path.join(inversion_dir, f'{fig_prefix_dir}_ensembles.pkl')
-    with open(save_path, 'wb') as f:
-        pickle.dump(results, f)
-    print(f"Full results saved to {save_path}")
     
     return results
 
